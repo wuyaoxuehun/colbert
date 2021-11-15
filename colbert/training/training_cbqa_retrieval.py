@@ -15,14 +15,15 @@ from colbert.modeling.colbert_list_qa import ColBERT_List_qa
 from colbert.modeling.colbert_list_qa import load_model_helper, load_model
 from colbert.parameters import DEVICE
 from colbert.utils.amp import MixedPrecisionManager
-from conf import reader_config, colbert_config, model_config, p_num, Temperature, padded_p_num, index_config, save_model_name
+from conf import reader_config, colbert_config, model_config, p_num, Temperature, padded_p_num, index_config, save_model_name, pos_num, neg_num
 from torch.utils.data.distributed import DistributedSampler
 from torch.nn.parallel import DistributedDataParallel as DDP
 from colbert import base_config
-from colbert.training.losses import listnet_loss, listMLE
+from colbert.training.losses import listnet_loss, listMLE, listMLEWeighted, listMLEPLWeighted
 from mlflow import log_metric, log_param
-from colbert.training.training_utils import SequentialDistributedSampler
+from colbert.training.training_utils import SequentialDistributedSampler, moving_average, sample_T_scheduler
 from ir_score_silver import eval_metric_for_data
+from colbert.training.training_utils import scheduler_neg
 
 logging.basicConfig(format="%(asctime)s - %(levelname)s - %(name)s -   %(message)s", datefmt="%m/%d/%Y %H:%M:%S",
                     level=logging.INFO if int(os.environ.get('LOCAL_RANK', 0)) in [-1, 0] else logging.WARN)
@@ -47,7 +48,7 @@ def cleanup():
     torch.distributed.destroy_process_group()
 
 
-retriever_criterion = listMLE
+retriever_criterion = listMLEWeighted
 
 
 def train(args):
@@ -82,7 +83,7 @@ def train(args):
     # train_sampler = RandomSampler(train_dataset)
     train_sampler = DistributedSampler(train_dataset, rank=args.rank, num_replicas=args.nranks) if args.distributed else RandomSampler(train_dataset)
     train_dataloader = DataLoader(dataset=train_dataset,
-                                  sampler=train_sampler, pin_memory=True, drop_last=True,
+                                  sampler=train_sampler, pin_memory=True, drop_last=False,
                                   batch_size=args.batch_size, collate_fn=collate_fun())
     t_total = len(train_dataloader) // args.gradient_accumulation_steps * args.epoch
     warm_up = 0
@@ -98,7 +99,8 @@ def train(args):
     #     model = torch.nn.DataParallel(model)
 
     global_step = 0
-    global_log_step = math.floor(len(train_dataloader) / args.gradient_accumulation_steps) // args.logging_steps
+    # global_log_step = math.floor(len(train_dataloader) / args.gradient_accumulation_steps) // args.logging_steps
+    global_log_step = (len(train_dataloader) // args.gradient_accumulation_steps) // args.logging_steps
     logger.info(f"global log step = {global_log_step * args.gradient_accumulation_steps}")
 
     model_helper = load_model_helper(args.rank)
@@ -108,14 +110,28 @@ def train(args):
     # loss_fun = AutomaticWeightedLoss(num=2)
     best_metrics = float('inf')
     retriever_labels = torch.zeros((args.batch_size * 4, args.batch_size * p_num * 4 + padded_p_num), dtype=torch.float, device=DEVICE)
+    neg_weight_mask = torch.zeros((args.batch_size * 4, args.batch_size * p_num * 4 + padded_p_num), dtype=torch.float, device=DEVICE)
     for epoch in tqdm(range(args.epoch)):
         # epoch_iterator = tqdm(train_dataloader, desc="Iteration")
         if args.distributed:
             train_sampler.set_epoch(epoch)
         epoch_iterator = tqdm(train_dataloader) if args.rank == 0 else train_dataloader
-        tr_loss = 0
-        retriever_loss_total = 0
+        tr_loss = moving_average()
+        retriever_loss = moving_average()
         reader_loss_total = 0
+        pos_weight, hard_neg_weight, neg_weight = scheduler_neg(epoch, args.epoch)
+        logger.info(f"now neg weight={scheduler_neg(epoch, args.epoch)}")
+        for i in range(args.batch_size * 4):
+            # labels[i, i * pn_num:i * pn_num + pos_num] = score[i]
+            base_offset = (i // 4) * p_num * 4
+            # next_base_offset = (i // 4 + 1) * p_num * 4
+            neg_weight_mask[i, base_offset:base_offset + pos_num] = pos_weight
+            neg_weight_mask[i, base_offset + pos_num:base_offset + pos_num + neg_num] = hard_neg_weight
+            neg_weight_mask[0:base_offset] = neg_weight
+            neg_weight_mask[base_offset + pos_num + neg_num:] = neg_weight
+
+        train_dataset.sample_T = sample_T_scheduler(epoch, args.epoch)
+        logger.info(f"now sample_T = {sample_T_scheduler(epoch, args.epoch)}")
 
         for step, batch in enumerate(epoch_iterator):
             # Skip past any already trained steps if resuming training
@@ -168,7 +184,8 @@ def train(args):
                     # input()
 
                 # retriever_loss = retriever_criterion(y_pred=scores, y_true=retriever_labels[:scores.size(0), :scores.size(1)])
-                retriever_loss = retriever_criterion(y_pred=scores, y_true=retriever_labels[:scores.size(0), :scores.size(1)])
+
+                cur_retriever_loss = retriever_criterion(y_pred=scores, y_true=retriever_labels[:scores.size(0), :scores.size(1)], neg_weight_mask=neg_weight_mask)
                 # word_num = word_mask.sum(-1).unsqueeze(-1)
                 # scores = scores / word_num.cuda()
                 #
@@ -181,18 +198,18 @@ def train(args):
                 # total_loss = retriever_loss
                 # reader_loss = torch.tensor(0.0, requires_grad=True).cuda()
                 # total_loss = retriever_loss + reader_loss
-                total_loss = retriever_loss
+                total_loss = cur_retriever_loss
                 if args.gradient_accumulation_steps > 1:
                     total_loss = total_loss / args.gradient_accumulation_steps
 
-            retriever_loss_total += retriever_loss.item()
+            retriever_loss_average = retriever_loss.send(cur_retriever_loss)
             # reader_loss_total += 0
             # reader_loss_total += reader_loss.item()
             # input(total_loss)
 
             amp.backward(total_loss)
             # tr_loss += distributed_concat(tensor=total_loss.unsqueeze(0), num_total_examples=1).mean().item()
-            tr_loss += total_loss.item()
+            average_tr_loss = tr_loss.send(total_loss.item())
             # print(total_loss.item(), ir_loss.item(), reader_loss.item())
             # tr_loss += total_loss.item() * args.gradient_accumulation_steps
             # ir_loss_total += ir_loss.item()
@@ -215,7 +232,7 @@ def train(args):
                 # torch.distributed.barrier()
 
             # continue
-            if (step + 1) % args.gradient_accumulation_steps == 0 and global_step % global_log_step == 0:
+            if (step + 1) % args.gradient_accumulation_steps == 0 and (step + 1) % global_log_step == 0:
                 # distributed.barrier(args.rank)
                 # results, _, _ = evaluate(args, model)
                 eval_loss = eval_retrieval(args, model)
@@ -234,15 +251,15 @@ def train(args):
                     logger.info("Current best loss = %s", best_metrics)
                     logger.info("global_log_step = %s", global_log_step)
                     # logger.info("tr_loss = %s", tr_loss / (step + 1))
-                    logger.info("tr_loss = %s", tr_loss / (step + 1))
+                    logger.info("tr_loss = %s", average_tr_loss)
                     logger.info("eval_loss = %s", eval_loss)
                     log_metric("eval_loss", eval_loss)
-                    log_metric('train_loss', tr_loss / (step + 1))
+                    log_metric('train_loss', average_tr_loss)
                 distributed.barrier(args.rank)
 
             if args.rank <= 0:
-                epoch_iterator.set_postfix(avg_ir='%.4f' % (retriever_loss_total / (step + 1)), avg_reader='%.4f' % (reader_loss_total / (step + 1)),  # elapsed='%.4d' % elapsed,
-                                           avg_total='%.4f' % (tr_loss / (step + 1)), )  # reader_lr='%.4e' % (scheduler.get_last_lr()[0]))
+                epoch_iterator.set_postfix(avg_ir='%.4f' % retriever_loss_average, avg_reader='%.4f' % (reader_loss_total / (step + 1)),  # elapsed='%.4d' % elapsed,
+                                           avg_total='%.4f' % average_tr_loss, )  # reader_lr='%.4e' % (scheduler.get_last_lr()[0]))
             # ir_lr='%.4f' % (retriever_scheduler.get_last_lr()[0]))
         # model.module.old_colbert = load_model(colbert_config).cuda()
         # model.module.old_colbert.load_state_dict(model.module.colbert.state_dict())
@@ -275,7 +292,7 @@ def eval_retrieval(args, colbert_qa=None):
     amp = MixedPrecisionManager(args.amp)
 
     tokenizer = CostomTokenizer.from_pretrained(base_config.pretrain)
-    train_dataset = CBQADataset('rougelr-test-0', tokenizer=tokenizer, doc_maxlen=colbert_config['doc_maxlen'],
+    train_dataset = CBQADataset('rougelr-dev-0', tokenizer=tokenizer, doc_maxlen=colbert_config['doc_maxlen'],
                                 query_maxlen=colbert_config['query_maxlen'], reader_max_seq_length=reader_config['max_seq_length'])
     # t_total = len(train_dataset) // args.gradient_accumulation_steps * args.epoch
     # train_sampler = SequentialSampler(train_dataset)
@@ -300,13 +317,14 @@ def eval_retrieval(args, colbert_qa=None):
     # global padded_p_num, p_num
     # t_pnum, tpad_pnum = p_num, padded_p_num
     # p_num, padded_p_num = 100, 0
-    eval_p_num = 20
+    eval_p_num = 10
     eval_pad_p_num = 10
     # retriever_labels = torch.zeros((args.batch_size * 4, args.batch_size * eval_p_num * 4), dtype=torch.float, device=DEVICE)
     retriever_labels = torch.zeros((args.batch_size * 4, args.batch_size * eval_p_num * 4 + eval_pad_p_num), dtype=torch.float, device=DEVICE)
 
     eval_loss = 0
     eval_steps = 0
+    logger.info("doing evaluating")
     for step, batch in enumerate(epoch_iterator):
         # Skip past any already trained steps if resuming training
         model.eval()
