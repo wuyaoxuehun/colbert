@@ -20,17 +20,6 @@ from colbert.training.training_utils import softmax
 logger = logging.getLogger(name='__main__')
 
 
-# keys = ["background", "question", "A", "B", "C", "D"]
-# ekeys = ["ID"]
-# for k in keys:
-#     ekeys.append(k)
-#     ekeys.append(k + "_cut")
-# ekeys.append("answer")
-
-# Example = namedtuple("Example", ["ID", "background", "background_cut", "question", "question_cut", "A", "A_cut", "paragraph_a", "B", "B_cut", "paragraph_b",
-#                                  "C", "C_cut", "paragraph_c", "D", "D_cut", "paragraph_d", "answer"])
-
-
 def load_data(file, task=0):
     import json
     data = []
@@ -38,33 +27,9 @@ def load_data(file, task=0):
         all_data = json.load(f)
         logger.info(len(all_data))
         for instance in all_data:
-            # contexts = []
-            # background = filterBackground(instance['background'])
-            # question_text = filterQuestion(instance['question'])
-
             if instance['answer'] not in list('ABCD'):
                 print(instance['answer'])
                 continue
-            # data.append(Example(
-            #     ID=instance['id'],
-            #     background=instance['background'],
-            #     background_cut=instance['background_cut'],
-            #     question=instance['question'],
-            #     question_cut=instance['question_cut'],
-            #     A=instance['A'],
-            #     A_cut=instance['A_cut'],
-            #     paragraph_a=None,
-            #     B=instance['B'],
-            #     B_cut=instance['B_cut'],
-            #     paragraph_b=None,
-            #     C=instance['C'],
-            #     C_cut=instance['C_cut'],
-            #     paragraph_c=None,
-            #     D=instance['D'],
-            #     D_cut=instance['D_cut'],
-            #     paragraph_d=None,
-            #     answer=ord(instance['answer']) - ord('A')
-            # ))
             data.append(instance)
     logger.info(len(data))
     if file.find('dev') != -1:
@@ -93,57 +58,6 @@ def load_data_(files):
 
     return data
 
-
-# def collate_fun(device, RD=True):
-#     def collate(batch: List[Dict[str, Any]]):
-#         keys = batch[0].keys()
-#         input_dict = {}
-#         # max_labels_len = max([len(_['labels']) for _ in batch])
-#         # print(batch[0]['attention_mask'])
-#         # print(batch[0]['attention_mask'][0])
-#         max_seq_len_batch = max([sum(k) for _ in batch for j in _['attention_mask'] for k in j])
-#         max_seq_len_batch = 512
-#         aug_num = len(batch[0]['attention_mask'])
-#         # print(f"augnum: {aug_num}")
-#         # max_seq_len_batch = 512
-#         # max_seq_len_batch = len(batch[0]['attention_mask'])
-#         # print(batch)
-#         # input()
-#         for k in keys:
-#             if k == "segment_lens":
-#                 # input_dict[k] = [j[0] for _ in batch for j in _[k]]
-#                 input_dict[k] = [j for _ in batch for j in _[k]]
-#                 # input(input_dict[k])
-#             elif k in ["labels", "task"]:
-#                 # print([_[k] for _ in batch])
-#                 input_dict[k] = [_[k] * aug_num for _ in batch]
-#                 # input(input_dict[k])
-#             else:
-#                 input_dict[k] = [[s[:max_seq_len_batch] for s in j] for _ in batch for j in _[k]]
-#
-#         # input_dict['sent_nums'] = [len(_['labels']) for _ in batch for t in range(aug_num)]
-#         for k in list(keys):
-#             # print(k)
-#             # if RD:
-#             #     if k == 'input_ids':
-#             #         input_dict[k] = torch.tensor([mappings[i % mapping_len](input_dict[k][i // mapping_len]) for i in range(mapping_len * len(input_dict[k]))]).to(device)
-#             #     else:
-#             #         input_dict[k] = torch.tensor([input_dict[k][i // mapping_len] for i in range(mapping_len * len(input_dict[k]))]).to(device)
-#             #
-#             #     # print(input_dict[k][:3])
-#             #     # input()
-#             # else:
-#             input_dict[k] = torch.tensor(input_dict[k]).to(device)
-#             # print(k, input_dict[k].size())
-#             # if k == "labels":
-#             #     print(input_dict[k])
-#             # input()
-#             # print(k, '\n', input_dict[k][0])
-#             # input()
-#         # print(input_dict['input_ids'][0][0])
-#         # input()
-#         return input_dict
-# return collate
 
 def collate_fun():
     def fun(batch):
@@ -260,34 +174,7 @@ class CBQADataset(Dataset):
 
             pos.sort(key=lambda x: x['score'], reverse=True)
             neg.sort(key=lambda x: x['score'], reverse=True)
-            # print(len(pos), len(neg))
-            # print([_['score'] for _ in pos])
-            # print([_['score'] for _ in neg])
-            # input()
-            # if len(neg) == 0:
-            #     neg.append({
-            #         'score': 0.0,
-            #         'paragraph': '#',
-            #         'paragraph_cut': {
-            #             'tok': '#'
-            #         }
-            #     })
-            # if len(pos) == 0:
-            #     if neg[0]['score'] < -1:
-            #         # ending_cut = inst[opt.upper() + '_cut']
-            #         # pos.append({
-            #         #     'score': 1,
-            #         #     'paragraph': ending,
-            #         #     'paragraph_cut': ending_cut
-            #         # })
-            #         # pos.append()
-            #         assert False
-            #     else:
-            #         while len(pos) < pos_num:
-            #             pos.append(neg.pop(0))
-            # print([_['score'] for _ in pos])
-            # print([_['score'] for _ in neg])
-            # input()
+
             while len(pos) < pos_num:
                 pos.append(neg.pop(0))
             while len(neg) < neg_num:
@@ -338,9 +225,6 @@ class CBQADataset(Dataset):
             eval_p_num = p_num
         for t in batch:
             self.get_score_for_inst_every_ending(t, eval_p_num, is_evaluating)
-        # import json
-        # json.dump(batch, open("temp.json", 'w', encoding='utf8'), ensure_ascii=False, indent=2)
-        # input()
 
         for line_idx, example in enumerate(batch):
             contexts = [example['paragraph_' + opt] for opt in 'abcd']
@@ -413,16 +297,6 @@ class CBQADataset(Dataset):
         return torch.tensor(all_input_ids), torch.tensor(all_input_mask), \
                torch.tensor(all_segment_ids), torch.tensor(all_segment_lens), torch.tensor(all_labels)
 
-    # def transform_inst(self, inst: Dict):
-    #     input_ids, token_type_ids, attention_mask, segment_lens = self.tokenize(inst)
-    #     return {
-    #         "input_ids": input_ids,
-    #         "token_type_ids": token_type_ids,
-    #         "attention_mask": attention_mask,
-    #         "segment_lens": segment_lens,
-    #         "labels": ord(inst['answer']) - ord('A'),
-    #         'task': 0
-    #     }
 
     def __getitem__(self, index):
         index = index % len(self.data)

@@ -20,6 +20,7 @@ def get_best_partitons(num_embeddings):
 
 def index_by_model(args):
     colbert_config['init'] = True
+    print(colbert_config)
     colbert_qa = ColBERT_List_qa(config=model_config, colbert_config=colbert_config, reader_config=reader_config, load_old=False)
     colbert_qa.load(args.checkpoint + "/pytorch.bin")
     encoder = CollectionEncoder(args, process_idx=0, num_processes=1, model=colbert_qa.colbert)

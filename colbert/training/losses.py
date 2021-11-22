@@ -2,7 +2,7 @@ import torch.nn.functional as F
 import torch
 
 
-def listnet_loss(y_pred, y_true, eps=1e-10):
+def listnet_loss(y_pred, y_true, eps=1e-10, *args, **kwargs):
     P_y_i = F.softmax(y_true, dim=-1)
     P_z_i = F.softmax(y_pred, dim=-1) + eps
     # print(P_y_i[0], P_z_i[0])
@@ -86,12 +86,9 @@ def listMLEWeighted(y_pred, y_true, eps=1e-10, neg_weight_mask=None):
         neg_weight_mask_shuffled = neg_weight_mask[:, random_indices]
         neg_weight_mask_sorted_by_true = torch.gather(neg_weight_mask_shuffled, dim=1, index=indices)
         observation_loss *= neg_weight_mask_sorted_by_true
-        # print(neg_weight_mask_sorted_by_true)
-        # print(observation_loss)
-        # input()
 
     # observation_loss[mask] = 0.0
-    return torch.mean(torch.sum(observation_loss, dim=1)) / y_true.size(1)
+    return torch.mean(torch.sum(observation_loss, dim=1)) / (y_true[0].bool().sum())
 
 
 def listMLEPLWeighted(y_pred, y_true, eps=1e-10, neg_weight_mask=None):
@@ -131,11 +128,13 @@ def listMLEPLWeighted(y_pred, y_true, eps=1e-10, neg_weight_mask=None):
     # observation_loss[mask] = 0.0
     return torch.mean(torch.sum(observation_loss, dim=1)) / y_true.size(1)
 
+
 def _pl_sample(t, T=0.5):
     t /= T
     probs = F.softmax(t, dim=-1)
     random_indices = probs.multinomial(num_samples=t.size(1), replacement=False)
     return random_indices
+
 
 import torch
 import torch.nn as nn

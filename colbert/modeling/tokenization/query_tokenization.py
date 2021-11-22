@@ -95,7 +95,7 @@ class QueryTokenizer():
         ids, mask, word_mask, tokens = obj
         # postprocess for the [Q] marker and the [MASK] augmentation
         ids[:, 1] = self.Q_marker_token_id
-        ids[ids == 0] = self.mask_token_id
+        # ids[ids == 0] = self.mask_token_id
 
         if bsize:
             if output_tokens:
@@ -106,3 +106,29 @@ class QueryTokenizer():
         if output_tokens:
             return ids, mask, word_mask, tokens
         return ids, mask, word_mask
+
+    def tensorize_noopt_dict(self, batch_text, bsize=None, output_tokens=False):
+        assert type(batch_text) in [list, tuple], (type(batch_text))
+        # obj = self.tok(batch_text, padding='max_length', truncation=True,
+        #                return_tensors='pt', max_length=self.query_maxlen)
+        # obj = self.tok.tokenize_q_dict(batch_text, self.segmenter, self.query_maxlen)
+        obj = self.tok.tokenize_q_noopt_segmented_dict(batch_text, self.query_maxlen, query_max_length=64)
+        # ids, mask = obj['input_ids'], obj['attention_mask']
+        ids, mask, word_mask, tokens = obj[0]
+        answer_ids, answer_word_mask, answer_tokens = obj[1]
+
+        # postprocess for the [Q] marker and the [MASK] augmentation
+        ids[:, 1] = self.Q_marker_token_id
+        answer_ids[:, 1] = self.Q_marker_token_id
+        answer_ids[answer_ids == 0] = -100
+        # ids[ids == 0] = self.mask_token_id
+
+        if bsize:
+            if output_tokens:
+                batches = _split_into_batches_bundle((ids, mask, word_mask, tokens), bsize)
+            else:
+                batches = _split_into_batches(ids, mask, word_mask, bsize)
+            return batches
+        if output_tokens:
+            return ids, mask, word_mask, tokens
+        return (ids, mask, word_mask), (answer_ids, answer_word_mask, answer_tokens)

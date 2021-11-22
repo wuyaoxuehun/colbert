@@ -130,7 +130,8 @@ def index_faiss_simple(args):
     slice_parts_paths = parts_paths
     slice_samples_paths = samples_paths
 
-    faiss_index_name = get_faiss_index_name(args)
+    # faiss_index_name = get_faiss_index_name(args)
+    faiss_index_name = "ivfpq.2000.faiss"
 
     output_path = os.path.join(args.index_path, faiss_index_name)
     print_message(f"#> Will write to {output_path}.")

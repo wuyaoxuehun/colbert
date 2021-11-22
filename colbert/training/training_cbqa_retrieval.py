@@ -15,13 +15,13 @@ from colbert.modeling.colbert_list_qa import ColBERT_List_qa
 from colbert.modeling.colbert_list_qa import load_model_helper, load_model
 from colbert.parameters import DEVICE
 from colbert.utils.amp import MixedPrecisionManager
-from conf import reader_config, colbert_config, model_config, p_num, Temperature, padded_p_num, index_config, save_model_name, pos_num, neg_num
+from conf import reader_config, colbert_config, model_config, p_num, Temperature, padded_p_num, index_config, save_model_name, pos_num, neg_num, SCORE_TEMPERATURE
 from torch.utils.data.distributed import DistributedSampler
 from torch.nn.parallel import DistributedDataParallel as DDP
 from colbert import base_config
 from colbert.training.losses import listnet_loss, listMLE, listMLEWeighted, listMLEPLWeighted
 from mlflow import log_metric, log_param
-from colbert.training.training_utils import SequentialDistributedSampler, moving_average, sample_T_scheduler
+from colbert.training.training_utils import SequentialDistributedSampler, moving_average, sample_T_scheduler, split_parameters
 from ir_score_silver import eval_metric_for_data
 from colbert.training.training_utils import scheduler_neg
 
@@ -29,7 +29,7 @@ logging.basicConfig(format="%(asctime)s - %(levelname)s - %(name)s -   %(message
                     level=logging.INFO if int(os.environ.get('LOCAL_RANK', 0)) in [-1, 0] else logging.WARN)
 logger = logging.getLogger(__name__)
 from colbert.utils import distributed
-
+# import bitsandbytes as bnb
 from transformers.utils.logging import set_verbosity_error
 
 set_verbosity_error()
@@ -64,7 +64,12 @@ def train(args):
     # for param in colbert_qa.colbert.parameters():
     # param.requires_grad = False
 
-    retriever_optimizer = AdamW(filter(lambda p: p.requires_grad, colbert_qa.module.colbert.parameters()), lr=args.retriever_lr, eps=1e-8)
+    params_decay, params_no_decay = split_parameters(colbert_qa.module.colbert)
+    # retriever_optimizer = AdamW(filter(lambda p: p.requires_grad, colbert_qa.module.colbert.parameters()), lr=args.retriever_lr, eps=1e-8)
+    retriever_optimizer = torch.optim.Adam([
+        {'params': params_decay},
+        {'params': params_no_decay, 'weight_decay': 0.0}], lr=args.retriever_lr, weight_decay=1e-2)
+    # retriever_optimizer = bnb.optim.Adam8bit(filter(lambda p: p.requires_grad, colbert_qa.module.colbert.parameters()), lr=args.retriever_lr)
 
     # optimizer = AdamW(filter(lambda p: p.requires_grad, colbert_qa.reader.parameters()), lr=args.lr, eps=1e-8)
     reader_optimizer = AdamW(filter(lambda p: p.requires_grad, colbert_qa.module.reader.parameters()), lr=args.lr, eps=1e-8)
@@ -127,8 +132,8 @@ def train(args):
             # next_base_offset = (i // 4 + 1) * p_num * 4
             neg_weight_mask[i, base_offset:base_offset + pos_num] = pos_weight
             neg_weight_mask[i, base_offset + pos_num:base_offset + pos_num + neg_num] = hard_neg_weight
-            neg_weight_mask[0:base_offset] = neg_weight
-            neg_weight_mask[base_offset + pos_num + neg_num:] = neg_weight
+            neg_weight_mask[i, 0:base_offset] = neg_weight
+            neg_weight_mask[i, base_offset + pos_num + neg_num:] = neg_weight
 
         train_dataset.sample_T = sample_T_scheduler(epoch, args.epoch)
         logger.info(f"now sample_T = {sample_T_scheduler(epoch, args.epoch)}")
@@ -137,30 +142,6 @@ def train(args):
             # Skip past any already trained steps if resuming training
             model.train()
             with amp.context():
-                # ids, mask, word_mask = train_dataset.tokenize_for_retriever(batch)
-                # # Q = model.colbert.query(ids, mask)
-                # with torch.no_grad():
-                #     Q = model.old_colbert.query(ids, mask)
-                # # Q = model.colbert.query(ids, mask)
-                # retrieval_scores, d_paras = model.retriever_forward(Q, q_word_mask=word_mask, labels=None)
-                # # print(batch[0]['question'], '\n', batch[0]['A'], '\n', d_paras[0][:2])
-                # # input()
-                # Q = model.colbert.query(ids, mask)
-                # pass
-                # model_helper.merge_to_reader_input(batch, d_paras)
-                #
-                # padded_negs = [model_helper.all_paras[_] for _ in np.random.randint(1, len(model_helper.all_paras), padded_p_num)]
-                #
-                # D_ids, D_mask, D_word_mask, D_scores = train_dataset.tokenize_for_train_retriever(batch, padded_negs)
-                #
-                # # D = model.colbert.doc(D_ids, D_mask)
-                # with torch.no_grad():
-                #     D = model.doc_colbert_fixed.doc(D_ids, D_mask)
-                # # D = model.colbert.doc(D_ids, D_mask)
-                # # if model.old_colbert.training:
-                # D = D.requires_grad_(requires_grad=True)
-                #
-                # scores = model.colbert.score(Q, D, q_mask=word_mask, d_mask=D_word_mask)
                 scores, D_scores = model(batch, train_dataset, merge=False, doc_enc_training=True, pad_p_num=padded_p_num)
 
                 # D_word_mask = D_word_mask.view(Q.size(0), p_num, D.size(1))
@@ -169,9 +150,9 @@ def train(args):
 
                 for i in range(len(batch) * 4):
                     # labels[i, i * pn_num:i * pn_num + pos_num] = score[i]
-                    retriever_labels[i, (i // 4) * p_num * 4:(i // 4 + 1) * p_num * 4] = D_scores[i, :p_num * 4] / Temperature
+                    retriever_labels[i, (i // 4) * p_num * 4:(i // 4 + 1) * p_num * 4] = D_scores[i, :p_num * 4]
                     if padded_p_num:
-                        retriever_labels[i, -padded_p_num:] = D_scores[i, -padded_p_num:] / Temperature
+                        retriever_labels[i, -padded_p_num:] = D_scores[i, -padded_p_num:]
 
                 # print(retriever_labels)
                 # input()
@@ -182,10 +163,10 @@ def train(args):
                     idx = idx // 4
                     print(batch[idx]['background'], '\n', batch[idx]['question'], '\n', batch[idx]['A'], '\n', '\n'.join([_['paragraph'] for _ in batch[idx]['paragraph_a'][:2]]))
                     # input()
-
                 # retriever_loss = retriever_criterion(y_pred=scores, y_true=retriever_labels[:scores.size(0), :scores.size(1)])
 
-                cur_retriever_loss = retriever_criterion(y_pred=scores, y_true=retriever_labels[:scores.size(0), :scores.size(1)], neg_weight_mask=neg_weight_mask)
+                cur_retriever_loss = retriever_criterion(y_pred=scores / SCORE_TEMPERATURE, y_true=retriever_labels[:scores.size(0), :scores.size(1)], neg_weight_mask=neg_weight_mask)
+                # cur_retriever_loss = retriever_criterion(y_pred=scores / Temperature, y_true=retriever_labels[:scores.size(0), :scores.size(1)] / Temperature)
                 # word_num = word_mask.sum(-1).unsqueeze(-1)
                 # scores = scores / word_num.cuda()
                 #
@@ -220,9 +201,6 @@ def train(args):
                 # amp.step([model.colbert, model.reader], [retriever_optimizer, reader_optimizer])
                 optimizers = [retriever_optimizer]
                 amp.step([model.module.colbert], optimizers)
-                # input(model.module.colbert.linear.weight[0, :5])
-                # input(model.module.colbert.linear.weight.grad[0, :5])
-                # input()
 
                 for optimizer in optimizers:
                     optimizer.zero_grad()
@@ -317,8 +295,8 @@ def eval_retrieval(args, colbert_qa=None):
     # global padded_p_num, p_num
     # t_pnum, tpad_pnum = p_num, padded_p_num
     # p_num, padded_p_num = 100, 0
-    eval_p_num = 10
-    eval_pad_p_num = 10
+    eval_p_num = 5
+    eval_pad_p_num = 5
     # retriever_labels = torch.zeros((args.batch_size * 4, args.batch_size * eval_p_num * 4), dtype=torch.float, device=DEVICE)
     retriever_labels = torch.zeros((args.batch_size * 4, args.batch_size * eval_p_num * 4 + eval_pad_p_num), dtype=torch.float, device=DEVICE)
 
@@ -328,7 +306,6 @@ def eval_retrieval(args, colbert_qa=None):
     for step, batch in enumerate(epoch_iterator):
         # Skip past any already trained steps if resuming training
         model.eval()
-
         with torch.no_grad():
             # ids, mask, word_mask = train_dataset.tokenize_for_retriever(batch)
             # Q = model.colbert.query(ids, mask)
@@ -432,10 +409,12 @@ def eval_retrieval_for_model(args):
 
     index_config['index_path'] = args.index_path
     index_config['faiss_index_path'] = args.index_path + "ivfpq.2000.faiss"
+    # index_config["faiss_depth"] = 64
+    # index_config["n_probe"] = 320
     # model_helper = load_model_helper(args.rank)
-    model_helper = load_model_helper(0)
-    # load_model_helper()
-    retriever_criterion = listnet_loss
+    # model_helper = load_model_helper(0)
+    load_model_helper()
+    # retriever_criterion = listnet_loss
 
     # loss_fun = AutomaticWeightedLoss(num=2)
     best_metrics = 0

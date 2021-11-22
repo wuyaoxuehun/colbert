@@ -2,6 +2,7 @@ import string
 
 import torch
 import torch.nn as nn
+from torch import einsum
 from transformers import BertPreTrainedModel, BertModel
 
 from colbert.parameters import DEVICE
@@ -85,22 +86,9 @@ class ColBERT_List(BertPreTrainedModel):
         return D
 
     def score(self, Q, D, q_mask=None, d_mask=None):
-        scores = None
-        if d_mask is not None:
-            d_mask = d_mask.to(DEVICE)
-            D = (D.permute(2, 0, 1) * d_mask).permute(1, 2, 0)
-        if self.similarity_metric == 'cosine':
-            # print(Q[0, 0, :])
-            # print(D[1, 0, :])
-            Q = Q.unsqueeze(1)  # (Q, 1, seqQ, H)
-            D = D.permute(0, 2, 1)  # (D, H, seqD)
-            # Q @ D -> Q*D*seqQ*seqD
-            # return (Q @ D).max(-1).values.sum(-1)
-            scores = (Q @ D).max(-1).values  # (Q, D, seqQ)
-            if q_mask is not None:
-                q_mask = q_mask.to(DEVICE)
-                scores = scores.permute(1, 0, 2)  # (D, Q, seqQ)
-                scores = (scores * q_mask).sum(-1).T
-            else:
-                scores = scores.sum(-1)
+        if d_mask is not None and q_mask is not None:
+            D = D * d_mask[..., None]
+            Q = Q * q_mask[..., None]
+        scores = einsum("qmh,dnh->qdmn", Q, D).max(-1)[0].sum(-1)
         return scores
+

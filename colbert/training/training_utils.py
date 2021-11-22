@@ -3,6 +3,7 @@ from functools import wraps
 import torch
 import numpy as np
 
+
 class SequentialDistributedSampler(torch.utils.data.sampler.Sampler):
     """
     Distributed Sampler that subsamples indicies sequentially,
@@ -42,27 +43,6 @@ class SequentialDistributedSampler(torch.utils.data.sampler.Sampler):
         return self.num_samples
 
 
-def cache_decorator(cache_key):
-    cache = {}
-
-    def decorator(funct):
-        def fun(inst):
-            if inst[cache_key] in cache:
-                # print('hit cache')
-                pass
-            else:
-                cache[inst[cache_key]] = funct(inst)
-            return cache[inst[cache_key]]
-
-        return fun
-
-    return decorator
-
-
-# @cache_decorator(cache_key='key')
-# def func(inst):
-#     return inst['val'] ** 2
-
 #
 # def scheduler_neg(epoch, total_epoch):
 #     if epoch < int(total_epoch * 1 / 5):
@@ -74,10 +54,14 @@ def cache_decorator(cache_key):
 
 def scheduler_neg(epoch, total_epoch):
     # epoch += 1
-    max_val = [20, 10, 1]
-    return [(_ - 1) / (total_epoch - 1) * epoch + 1 for _ in max_val]
+    min_val = [1, 1, 1]
+    max_val = [10, 5, 1]
+    return softmax([(ma - mi) / (total_epoch - 1) * epoch + mi for ma, mi in zip(max_val, min_val)], T=5)
+    # return [(ma - mi) / (total_epoch - 1) * epoch + mi for ma, mi in zip(max_val, min_val)]
 
-def softmax(x):
+
+def softmax(x, T=1):
+    x = np.array(x) / T
     y = np.exp(x - np.max(x))
     f_x = y / sum(y)
     return f_x
@@ -86,6 +70,7 @@ def softmax(x):
 def sample_T_scheduler(epoch, total_epoch):
     min_T, max_T = 1, 20
     return max_T - (max_T - min_T) / (total_epoch - 1) * epoch
+
 
 def pre_activate_coroutine(func):
     @wraps(func)
@@ -114,12 +99,28 @@ def test_sample_T():
     for i in range(E):
         print(sample_T_scheduler(i, total_epoch=E))
 
-# t1 = {'key': 1, 'val': 1}
-# t2 = {'key': 2, 'val': 2}
-#
-# print(func(t1))
-# print(func(t2))
-# print(func(t1))
-# print(func(t2))
+
+def split_parameters(module):
+    params_decay = []
+    params_no_decay = []
+    for m in module.modules():
+        if isinstance(m, torch.nn.Linear):
+            params_decay.append(m.weight)
+            if m.bias is not None:
+                params_no_decay.append(m.bias)
+        elif isinstance(m, torch.nn.modules.conv._ConvNd):
+            params_decay.append(m.weight)
+            if m.bias is not None:
+                params_no_decay.append(m.bias)
+        elif isinstance(m, torch.nn.modules.batchnorm._BatchNorm):
+            params_no_decay.extend([*m.parameters()])
+        elif len(list(m.children())) == 0:
+            params_decay.extend([*m.parameters()])
+    assert len(list(module.parameters())) == len(params_decay) + len(params_no_decay)
+    return params_decay, params_no_decay
+
+
 if __name__ == '__main__':
-    test_sample_T()
+    # test_sample_T()
+    for i in range(10):
+        print(scheduler_neg(i, 10))

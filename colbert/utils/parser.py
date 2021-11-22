@@ -125,5 +125,5 @@ class Arguments():
         # Run.init(args.rank, args.root, args.experiment, args.run)
         # Run._log_args(args)
         # Run.info(args.input_arguments.__dict__, '\n')
-        print(args.input_arguments.__dict__)
+        # print(args.input_arguments.__dict__)
         return args

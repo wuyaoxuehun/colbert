@@ -19,7 +19,9 @@ from colbert.utils.utils import print_message, load_checkpoint
 from corpus_cb import load_all_paras
 from colbert.modeling.reader_models import BertForDHC
 from conf import *
+
 logger = logging.getLogger("__main__")
+
 
 # import pydevd_pycharm
 # pydevd_pycharm.settrace('114.212.84.202', port=8899, stdoutToServer=True, stderrToServer=True)
@@ -65,6 +67,8 @@ class ModelHelper:
 
     def retrieve_for_encoded_queries(self, batches, q_word_mask, retrieve_topk=10):
         if self.faiss_index is None:
+            logger.info('loading index from ' + index_config['index_path'])
+            logger.info(index_config)
             self.faiss_index = FaissIndex(self.index_config['index_path'], self.index_config['faiss_index_path'],
                                           self.index_config['n_probe'], part_range=self.index_config['part_range'], rank=self.rank)
             self.retrieve = partial(self.faiss_index.retrieve, self.index_config['faiss_depth'])
@@ -73,21 +77,22 @@ class ModelHelper:
         batches = torch.clone(batches)
         q_word_mask = torch.clone(q_word_mask)
         batches, q_word_mask_bool = batches.cpu().to(dtype=torch.float16), q_word_mask.cpu().bool().squeeze(-1)
-        batches = [q[q_word_mask_bool[idx]] for idx, q in enumerate(batches)]
+        batches = [q[q_word_mask_bool[idx]][:topk_token] for idx, q in enumerate(batches)]
+        only_pos_q_word_mask = [q_word_mask[idx][:topk_token][q_word_mask_bool[idx][:topk_token]] for idx, q in enumerate(batches)]
 
         batch_pids = []
         with torch.no_grad():
             for i, q in enumerate(batches):
-                only_pos_q_word_mask = q_word_mask[i][q_word_mask_bool[i]]
-                weighted_q = q * (only_pos_q_word_mask.unsqueeze(-1))
+                Q = q
+                pids = self.retrieve(Q.unsqueeze(0), verbose=False)[0]
+                weighted_q = q * only_pos_q_word_mask[i][:, None]
                 Q = weighted_q.unsqueeze(0)
-                pids = self.retrieve(Q, verbose=False)[0]
                 Q = Q.permute(0, 2, 1)
                 pids = self.index.ranker.rank_forward(Q, pids, depth=retrieve_topk)
                 batch_pids.append(pids)
                 # print([''.join(self.all_paras[pid]['paragraph_cut']['tok'].split()) for pid in pids[:2]])
-
             batch_D, batch_D_mask = self.index.ranker.get_doc_embeddings_by_pids(sum(batch_pids, []))
+
             batch_D = batch_D.view(len(batches), retrieve_topk, -1, self.dim)
             batch_D_mask = batch_D_mask.view(len(batches), retrieve_topk, -1)
 
@@ -181,8 +186,16 @@ class ColBERT_List_qa(nn.Module):
             D = self.colbert.doc(D_ids, D_mask)
         # D = model.colbert.doc(D_ids, D_mask)
         # if model.old_colbert.training:
-
+        Q = Q[:, :topk_token, ...].to(DEVICE)
+        word_mask = word_mask[:, :topk_token].to(DEVICE)
+        D = D[:, :topk_token, ...].to(DEVICE)
+        D_word_mask = D_word_mask[:, :topk_token].to(DEVICE)
         scores = self.colbert.score(Q, D, q_mask=word_mask, d_mask=D_word_mask)
+
+        # do normalization
+
+        scores = (scores / word_mask.bool().sum(1)[:, None])
+        # input(scores)
         return scores, D_scores
 
     def retriever_forward(self, Q, q_word_mask=None, labels=None):

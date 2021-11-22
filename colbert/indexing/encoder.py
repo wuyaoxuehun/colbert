@@ -203,6 +203,7 @@ class CollectionEncoder():
             d_ids = [_[0] for _ in batch]
             d_mask = [_[1] for _ in batch]
             d_word_mask = [_[2] for _ in batch]
+            # d_word_mask[:, 1:] = 0
             embs = self.inference.docFromTensorize((d_ids, d_mask, d_word_mask), bsize=self.args.bsize, keep_dims=False, to_cpu=True)
             assert type(embs) is list
             assert len(embs) == len(d_ids)

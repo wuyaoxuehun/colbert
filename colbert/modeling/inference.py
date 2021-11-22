@@ -6,6 +6,8 @@ from colbert.utils.amp import MixedPrecisionManager
 from colbert.parameters import DEVICE
 from tqdm import tqdm
 
+from conf import topk_token
+
 
 class ModelInference():
     def __init__(self, colbert, segmenter, amp=False):
@@ -79,7 +81,9 @@ class ModelInference():
 
                 if not keep_dims:
                     batches, d_word_mask_bool = batches.cpu().to(dtype=torch.float16), d_word_mask.cpu().bool().squeeze(-1)
-                    batches = [d[d_word_mask_bool[idx]] for idx, d in enumerate(batches)]
+                    # batches = [d[d_word_mask_bool[idx]] for idx, d in enumerate(batches)]
+                    # batches = [d[:1] for idx, d in enumerate(batches)]
+                    batches = [d[:topk_token][d_word_mask_bool[idx][:topk_token]] for idx, d in enumerate(batches)]
 
                     if output_word_weight:
                         D_word_weight = [dww[d_word_mask_bool[idx]] for idx, dww in enumerate(D_word_weight)]
