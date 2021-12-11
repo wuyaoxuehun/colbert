@@ -1,7 +1,8 @@
-pretrain = "../../../pretrain/chinese-bert-wwm-ext"
+# pretrain = "../../../pretrain/chinese-bert-wwm-ext"
 # pretrain = "../../../pretrain/chinese_roberta_wwm_ext"
 # pretrain = "../../../pretrain/rbt3"
 # pretrain = "../../../../pretrain/macbert-large/"
+pretrain = "../../../pretrain/bert-base-uncased"
 pos_num = 1
 neg_num = 1
 max_pos_sample = 10
@@ -15,6 +16,7 @@ from colbert.modeling.colbert_list import ColBERT_List
 ColBert = ColBERT_List
 # part_weight = [1, 1, 1]
 part_weight = [1, 15, 20]
+GENERATION_ENDING_TOK = '[unused3]'
 
 overwrite_mask_cache = False
 
@@ -22,10 +24,11 @@ from zhon.hanzi import punctuation
 
 puncts = ''.join(punctuation.split())
 
-
 import os
 
 stopwords = set()
+
+
 def read_stop_words():
     print(os.getcwd())
     file = os.getcwd() + '/data/stopwords.txt'
@@ -61,5 +64,5 @@ neg_threshold = 0.3
 segmenter = lambda x: x
 
 from transformers import BertTokenizerFast
-bert_tokenizer = BertTokenizerFast.from_pretrained(pretrain)
 
+bert_tokenizer = BertTokenizerFast.from_pretrained(pretrain)

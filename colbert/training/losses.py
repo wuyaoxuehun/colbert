@@ -20,6 +20,43 @@ def binary_listnet(y_pred, y_true):
     return loss
 
 
+def BiEncoderNllLoss(
+        scores,
+        positive_idx_per_question: list,
+        hard_negative_idx_per_question: list = None,
+):
+    """
+    Computes nll loss for the given lists of question and ctx vectors.
+    Note that although hard_negative_idx_per_question in not currently in use, one can use it for the
+    loss modifications. For example - weighted NLL with different factors for hard vs regular negatives.
+    :return: a tuple of loss value and amount of correct predictions per batch
+    """
+    softmax_scores = F.log_softmax(scores, dim=1)
+    loss = F.nll_loss(
+        softmax_scores,
+        torch.tensor(positive_idx_per_question).to(softmax_scores.device),
+        reduction="mean",
+    )
+
+    dual_scores = scores[:, ::2].T
+    dual_softmax_scores = F.log_softmax(dual_scores, dim=1)
+    dual_loss = F.nll_loss(
+        dual_softmax_scores,
+        torch.arange(0, dual_softmax_scores.size(0), dtype=torch.long).to(softmax_scores.device),
+        reduction="mean",
+    )
+    # max_score, max_idxs = torch.max(softmax_scores, 1)
+    # correct_predictions_count = (max_idxs == torch.tensor(positive_idx_per_question).to(max_idxs.device)).sum()
+
+    # if loss_scale:
+    #     loss.mul_(loss_scale)
+    # lam = 0.5
+    lam = 1
+
+    return lam * loss + (1 - lam) * dual_loss
+    # return loss, correct_predictions_count
+
+
 def listMLE(y_pred, y_true, eps=1e-10, padded_value_indicator=-1):
     """
     ListMLE loss introduced in "Listwise Approach to Learning to Rank - Theory and Algorithm".

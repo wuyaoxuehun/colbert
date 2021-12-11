@@ -92,15 +92,18 @@ def train_generation():
     encoder_hidden_states = torch.randn(2, 16, 768)
     # input(encoder_hidden_states[0, 0, :10])
     encoder_hidden_states.requires_grad_(True)
-    input_ids = torch.tensor([tokenizer.encode_plus("我的名字是")['input_ids'] for _ in range(2)])
-    # input(input_ids)
+    input_ids = torch.tensor([tokenizer.encode_plus("我的名字是")['input_ids'] + [0] * 10 for _ in range(2)])
+    input(input_ids)
     decoder = BertGenerationDecoder.from_pretrained(path, add_cross_attention=True, is_decoder=True, bos_token_id=101, eos_token_id=102).cuda()
     input_ids = input_ids.cuda()
     encoder_hidden_states = encoder_hidden_states.cuda()
     optimizer = AdamW(params=decoder.parameters(), lr=3e-5)
+    labels = input_ids.clone()
+    labels[input_ids == 0] = -100
+    print(labels)
     for i in tqdm(range(50)):
         decoder.train()
-        model_output = decoder(input_ids=input_ids, encoder_hidden_states=encoder_hidden_states, labels=input_ids)
+        model_output = decoder(input_ids=input_ids, encoder_hidden_states=encoder_hidden_states, labels=labels)
         model_output.loss.backward()
         optimizer.step()
         optimizer.zero_grad()
@@ -113,6 +116,7 @@ def train_generation():
     input_ids = torch.tensor([tokenizer.encode_plus("我的")['input_ids'] for _ in range(2)]).cuda()
     output = tokenizer.decode(beam_output[0], skip_special_tokens=True)
     print(output)
+
 
 if __name__ == '__main__':
     # test_encoder_decoder()
