@@ -11,7 +11,7 @@ from torch.utils.data.distributed import DistributedSampler
 from tqdm import tqdm
 from transformers import AdamW
 from transformers import get_linear_schedule_with_warmup
-# from colbert import base_config
+from colbert import base_config
 from colbert.modeling.tokenization.utils import CostomTokenizer
 from colbert.parameters import DEVICE
 from colbert.training.losses import listnet_loss, listMLEWeighted, BiEncoderNllLoss
@@ -19,7 +19,7 @@ from colbert.training.training_utils import SequentialDistributedSampler, moving
     mix_qd, pre_batch_enable
 from colbert.training.training_utils import scheduler_neg
 from colbert.utils.amp import MixedPrecisionManager
-from conf import reader_config, colbert_config, model_config, p_num, padded_p_num, index_config, save_model_name, pos_num, neg_num, SCORE_TEMPERATURE, opt_num, pretrain, lr
+from conf import reader_config, colbert_config, model_config, p_num, padded_p_num, index_config, save_model_name, pos_num, neg_num, SCORE_TEMPERATURE, opt_num
 from ir_score_silver import eval_metric_for_data, eval_metric_for_data_noopt
 from file_utils import dump_json
 from tests.pyserini_search import evaluate_retrieval
@@ -56,15 +56,7 @@ retriever_criterion = BiEncoderNllLoss
 def train(args):
     setseed(12345, args.rank)
 
-    colbert_config['init'] = True
-    colbert_qa = ColBERT_List_qa(config=model_config, colbert_config=colbert_config, reader_config=reader_config, load_old=False)
-    colbert_qa.to(DEVICE)
-    if args.distributed:
-        colbert_qa = DDP(colbert_qa, device_ids=[args.rank], find_unused_parameters=True)
-
-    colbert_qa.train()
-
-    tokenizer = CostomTokenizer.from_pretrained(pretrain)
+    tokenizer = CostomTokenizer.from_pretrained(base_config.pretrain)
     train_dataset = CBQADataset('webq-train-0', tokenizer=tokenizer, doc_maxlen=colbert_config['doc_maxlen'],
                                 query_maxlen=colbert_config['query_maxlen'], reader_max_seq_length=reader_config['max_seq_length'])
     train_sampler = DistributedSampler(train_dataset, rank=args.rank, num_replicas=args.nranks) if args.distributed else RandomSampler(train_dataset)
@@ -72,31 +64,35 @@ def train(args):
                                   sampler=train_sampler, pin_memory=True, drop_last=True,
                                   batch_size=args.batch_size, collate_fn=collate_fun())
     t_total = len(train_dataloader) // args.gradient_accumulation_steps * args.epoch
+
+    colbert_config['init'] = True
+    colbert_qa = ColBERT_List_qa(config=model_config, colbert_config=colbert_config, reader_config=reader_config, load_old=False)
+    colbert_qa.to(DEVICE)
+    if args.distributed:
+        colbert_qa = DDP(colbert_qa, device_ids=[args.rank], find_unused_parameters=True)
+
+    colbert_qa.train()
     # for param in colbert_qa.colbert.bert.parameters():
     # for param in colbert_qa.colbert.parameters():
     # param.requires_grad = False
 
     # params_decay, params_no_decay = [], []
     # lrs = [args.retriever_lr, args.retriever_lr * 2]
-    # lrs = [args.retriever_lr, 1e-3, 1e-3]
-    lrs = [lr, 1e-3, 1e-3]
-    logger.info("learning rate is " + str(lrs))
+    lrs = [args.retriever_lr, 1e-3, 1e-3]
     params = []
-    weight_decay = 0
+    weight_decay = 1e-2
     # optimized_modules = [colbert_qa.module.colbert, colbert_qa.module.decoder]
-    # optimized_modules = [colbert_qa.module.colbert]
-    optimized_modules = [[colbert_qa.module.model, colbert_qa.module.linear]]
-    for idx, modules in enumerate(optimized_modules):
+    optimized_modules = [colbert_qa.module.colbert]
+    for idx, module in enumerate(optimized_modules):
         # for idx, module in enumerate([colbert_qa.module.colbert]):
         # for module in [colbert_qa.module.colbert]:
-        for module in modules:
-            pd, pnd = split_parameters(module)
-            params.append({
-                'params': pd, 'weight_decay': weight_decay, 'lr': lrs[idx]
-            })
-            params.append({
-                'params': pnd, 'weight_decay': 0.0, 'lr': lrs[idx]
-            })
+        pd, pnd = split_parameters(module)
+        params.append({
+            'params': pd, 'weight_decay': weight_decay, 'lr': lrs[idx]
+        })
+        params.append({
+            'params': pnd, 'weight_decay': 0.0, 'lr': lrs[idx]
+        })
 
     # retriever_optimizer = AdamW(filter(lambda p: p.requires_grad, colbert_qa.module.colbert.parameters()), lr=args.retriever_lr, eps=1e-8)
     # retriever_optimizer = torch.optim.Adam([
@@ -226,7 +222,7 @@ def train(args):
                 #         D = torch.cat([D, d1], dim=0)
                 #         d_word_mask = torch.cat([d_word_mask, d_word_mask1], dim=0)
 
-                scores = model.module.score(Q, D, q_mask=q_word_mask, d_mask=d_word_mask)
+                scores = model.module.colbert.score(Q, D, q_mask=q_word_mask, d_mask=d_word_mask)
                 # scores[aug_mask.bool()] = -1e4
 
                 # scores = (scores / q_word_mask.bool().sum(1)[:, None])
@@ -276,15 +272,12 @@ def train(args):
             # input(total_loss)
 
             amp.backward(total_loss)
-            # batch_queue.append(batch)
+            batch_queue.append(batch)
             # if pre_batch_enable(epoch, args.epoch):
             #     qd_queue.append((_.detach().requires_grad_(False) for _ in [tQ, tq_word_mask, tD, td_word_mask]))
-            cur_retriever_loss_dist = distributed_concat(tensor=cur_retriever_loss.unsqueeze(0), num_total_examples=None).mean()
-            if not torch.isfinite(cur_retriever_loss_dist):
-                logger.warning('nan loss')
-            total_loss_dist = distributed_concat(tensor=total_loss.unsqueeze(0), num_total_examples=None).mean()
-            re_loss.add(cur_retriever_loss_dist.item() if torch.isfinite(cur_retriever_loss_dist) else 0)
-            tr_loss.add(total_loss_dist.item() if torch.isfinite(total_loss_dist) else 0)
+
+            re_loss.add(distributed_concat(tensor=cur_retriever_loss.unsqueeze(0), num_total_examples=None).mean().item())
+            tr_loss.add(distributed_concat(tensor=total_loss.unsqueeze(0), num_total_examples=None).mean().item())
             # ar_loss.add(distributed_concat(tensor=answer_reconstruction_loss.unsqueeze(0), num_total_examples=1).mean().item())
             # avg_qr_loss = qr_loss.send(distributed_concat(tensor=query_reconstruction_loss.unsqueeze(0), num_total_examples=1).mean().item())
             # avg_dr_loss = dr_loss.send(distributed_concat(tensor=doc_reconstruction_loss.unsqueeze(0), num_total_examples=1).mean().item())
@@ -303,7 +296,7 @@ def train(args):
                 # amp.step([model.colbert, model.reader], [retriever_optimizer, reader_optimizer])
                 optimizers = [retriever_optimizer]
                 # amp.step([[model.module.colbert]], optimizers)
-                amp.step(optimized_modules, optimizers)
+                amp.step([optimized_modules], optimizers)
 
                 for optimizer in optimizers:
                     optimizer.zero_grad()
@@ -380,7 +373,7 @@ def eval_retrieval(args, colbert_qa=None):
 
     amp = MixedPrecisionManager(args.amp)
 
-    tokenizer = CostomTokenizer.from_pretrained(pretrain)
+    tokenizer = CostomTokenizer.from_pretrained(base_config.pretrain)
     train_dataset = CBQADataset('webq-dev-0', tokenizer=tokenizer, doc_maxlen=colbert_config['doc_maxlen'],
                                 query_maxlen=colbert_config['query_maxlen'], reader_max_seq_length=reader_config['max_seq_length'])
     # t_total = len(train_dataset) // args.gradient_accumulation_steps * args.epoch
@@ -455,7 +448,7 @@ def eval_retrieval(args, colbert_qa=None):
                 #     torch.distributed.barrier()
                 Q, q_word_mask, D, d_word_mask = collection_qd_masks(Q, q_word_mask, D, d_word_mask, args.rank)
                 # scores = model.module.colbert.score(all_Q, all_D, q_mask=all_q_word_mask, d_mask=all_d_word_mask)
-                scores = model.module.score(Q, D, q_mask=q_word_mask, d_mask=d_word_mask)
+                scores = model.module.colbert.score(Q, D, q_mask=q_word_mask, d_mask=d_word_mask)
 
                 positive_idxes = torch.tensor([_ * p_num for _ in range(Q.size(0))])
                 cur_retriever_loss = retriever_criterion(scores=scores / SCORE_TEMPERATURE,
@@ -537,7 +530,7 @@ def eval_retrieval_for_model(args):
 
     amp = MixedPrecisionManager(args.amp)
 
-    tokenizer = CostomTokenizer.from_pretrained(pretrain)
+    tokenizer = CostomTokenizer.from_pretrained(base_config.pretrain)
     train_dataset = CBQADataset('webq-test-0', tokenizer=tokenizer, doc_maxlen=colbert_config['doc_maxlen'],
                                 query_maxlen=colbert_config['query_maxlen'], reader_max_seq_length=reader_config['max_seq_length'])
     # t_total = len(train_dataset) // args.gradient_accumulation_steps * args.epoch

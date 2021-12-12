@@ -8,11 +8,11 @@ import torch
 import yaml
 from torch import nn, einsum
 from torch.nn import CrossEntropyLoss
-from transformers import BertPreTrainedModel, BertGenerationDecoder
+from transformers import BertPreTrainedModel, BertGenerationDecoder, T5ForConditionalGeneration, T5Config, T5Tokenizer, T5TokenizerFast, T5EncoderModel
 import numpy as np
 # from colbert.modeling.colbert_list import ColBERT_List
 # import faiss_indexers
-from colbert.base_config import ColBert, pretrain, GENERATION_ENDING_TOK
+from colbert.base_config import ColBert, GENERATION_ENDING_TOK
 from colbert.modeling.tokenization.query_tokenization import QueryTokenizer
 # os.environ['CUDA_VISIBLE_DEVICES'] = "0"
 from colbert.parameters import DEVICE
@@ -150,17 +150,66 @@ class ColBERT_List_qa(nn.Module):
         #                                        dim=colbert_config['dim'],
         # similarity_metric = colbert_config['similarity'])
 
-        self.colbert = load_model(self.colbert_config, do_print=True)
+        self.model = encoder_model.from_pretrained(pretrain)
+        self.config = encoder_config.from_pretrained(pretrain)
+        # self.linear = nn.Linear(self.config.d_model, dim, bias=False)
+        self.linear = nn.Linear(self.config.hidden_size, dim, bias=False)
         # self.decoder = BertGenerationDecoder.from_pretrained(pretrain, add_cross_attention=True, is_decoder=True, bos_token_id=101, eos_token_id=GENERATION_ENDING_TOK).cuda()
         # self.embedding_size, self.hidden_size = self.colbert.bert.embeddings.word_embeddings.weight.size()
+        # self.colbert = self
         if load_old:
             self.old_colbert = load_model(colbert_config)
             self.doc_colbert_fixed = load_model(colbert_config)
         # self.reader = BertForDHC.from_pretrained(reader_config['reader_path'])
         self.reader = nn.Linear(2, 2)
-        self.config = config
+        # self.config = config
         self.ir_topk = ir_topk
         self.ir_linear = nn.Linear(20, 1)
+        self.tokenizer = T5TokenizerFast.from_pretrained(pretrain)
+        # self.dummy_labels = tokenizer
+
+    def get_dummy_labels(self, n):
+        # return self.tokenizer(["" for _ in range(n)],
+        return self.tokenizer([self.tokenizer.pad_token for _ in range(n)],
+                              padding='max_length',
+                              max_length=2,
+                              truncation=True,
+                              return_tensors="pt")['input_ids'].to(DEVICE)
+
+    def query(self, input_ids, attention_mask, **kwargs):
+        input_ids, attention_mask = input_ids.to(DEVICE), attention_mask.to(DEVICE)
+        # Q = self.t5(input_ids, attention_mask=attention_mask, return_dict=True, decoder_input_ids=self.get_dummy_labels(n=input_ids.size(0))).encoder_last_hidden_state
+        Q = self.model(input_ids, attention_mask=attention_mask, return_dict=True).last_hidden_state
+        # Q = self.linear_q(Q)
+        Q = self.linear(Q)
+        Q = torch.nn.functional.normalize(Q, p=2, dim=2)
+        return Q
+
+    def doc(self, input_ids, attention_mask, **kwargs):
+        # input_ids, attention_mask = input_ids.to(DEVICE), attention_mask.to(DEVICE)
+        # D = self.t5(input_ids, attention_mask=attention_mask, return_dict=True, labels=self.get_dummy_labels(n=input_ids.size(0))).encoder_last_hidden_state
+        print("inputIds", input_ids[-3, ...], attention_mask[-3, ...])
+        D = self.model(input_ids, attention_mask=attention_mask, return_dict=True).last_hidden_state
+        print("123424", D[-3, 0, ...])
+        # D = self.linear_d(D)
+        D = self.linear(D)
+        print("123", D[-3, 0, ...])
+        D = torch.nn.functional.normalize(D, p=2, dim=2)
+        return D
+
+    def score(self, Q, D, q_mask=None, d_mask=None):
+        print(Q.size(), D.size(), q_mask.size(), d_mask.size())
+        input()
+        # print(D[-3, 0, ...])
+        if d_mask is not None and q_mask is not None:
+            D = D * d_mask[..., None]
+            Q = Q * q_mask[..., None]
+
+        scores = einsum("qmh,dnh->qdmn", Q, D).max(-1)[0].sum(-1)
+        # if not torch.isfinite(scores[0]):
+        print(scores[0][-4:], scores[1][-4:])
+        input()
+        return scores
 
     def reconstruct_forward(self, input_ids, hidden_states):
         # encoder_hidden_states = Q[:, 0:1, ...]
@@ -183,7 +232,8 @@ class ColBERT_List_qa(nn.Module):
         # print(batch[0]['question'], '\n', batch[0]['A'], '\n', d_paras[0][:2])
         # input()
         if is_testing_retrieval:
-            Q = self.colbert.query(ids, q_word_mask)
+            # Q = self.colbert.query(ids, q_word_mask)
+            Q = self.query(ids, q_word_mask)
             retrieval_scores, d_paras = self.retriever_forward(Q, q_word_mask=q_word_mask, labels=None)
             model_helper.merge_to_reader_input(batch, d_paras)
             return
@@ -196,7 +246,7 @@ class ColBERT_List_qa(nn.Module):
 
         assert CrossEntropyLoss().ignore_index == -100
         ignore_index = CrossEntropyLoss().ignore_index
-        Q = self.colbert.query(ids, mask)
+        Q = self.query(ids, mask)
         if False:
             answer_reconstruction_loss = self.reconstruct_forward(answer_ids, Q[:, 1, ...])
             # reconstruction_criterion(reconstruction_text, answer_ids[:, 1:].reshape(-1))
@@ -220,7 +270,7 @@ class ColBERT_List_qa(nn.Module):
                 D = self.doc_colbert_fixed.doc(D_ids, D_mask)
                 D = D.requires_grad_(requires_grad=True)
         else:
-            D = self.colbert.doc(D_ids, D_mask)
+            D = self.doc(D_ids, D_mask)
 
         Q, D = Q.to(DEVICE), D.to(DEVICE)
         if False:

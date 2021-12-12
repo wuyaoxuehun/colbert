@@ -2,15 +2,18 @@ import torch
 
 from colbert.modeling.tokenization.utils import _split_into_batches,_split_into_batches_bundle, CostomTokenizer
 from colbert import base_config
+from conf import D_marker_token, pretrain
+
 
 class DocTokenizer():
     def __init__(self, doc_maxlen, segmenter=None):
-        self.tok = CostomTokenizer.from_pretrained(base_config.pretrain)
+        self.tok = CostomTokenizer.from_pretrained(pretrain)
         self.doc_maxlen = doc_maxlen
         self.segmenter = segmenter
-        self.D_marker_token, self.D_marker_token_id = '[D]', self.tok.convert_tokens_to_ids('[unused2]')
-        self.cls_token, self.cls_token_id = self.tok.cls_token, self.tok.cls_token_id
-        self.sep_token, self.sep_token_id = self.tok.sep_token, self.tok.sep_token_id
+        # self.D_marker_token, self.D_marker_token_id = '[D]', self.tok.convert_tokens_to_ids('[unused2]')
+        self.D_marker_token, self.D_marker_token_id = '[D]', self.tok.convert_tokens_to_ids(D_marker_token)
+        # self.cls_token, self.cls_token_id = self.tok.cls_token, self.tok.cls_token_id
+        # self.sep_token, self.sep_token_id = self.tok.sep_token, self.tok.sep_token_id
 
         # assert self.D_marker_token_id == 2
 
@@ -68,13 +71,13 @@ class DocTokenizer():
         # obj = self.tok(batch_text, padding='max_length', truncation=True,
         #                return_tensors='pt', max_length=self.query_maxlen)
         # obj = self.tok.tokenize_q_dict(batch_text, self.segmenter, self.query_maxlen)
-        obj = self.tok.tokenize_d_segmented_dict(batch_text, self.doc_maxlen, to_tensor=to_tensor, marker=self.D_marker_token_id)
+        obj = self.tok.tokenize_d_segmented_dict(batch_text, self.doc_maxlen, to_tensor=to_tensor)
         # ids, mask = obj['input_ids'], obj['attention_mask']
         ids, mask, word_mask, tokens = obj
         # postprocess for the [Q] marker and the [MASK] augmentation
         # print(ids.size())
-        if to_tensor:
-            ids[:, 1] = self.D_marker_token_id
+        # if to_tensor:
+        #     ids[:, 1] = self.D_marker_token_id
 
         # print(self.tok.convert_ids_to_tokens(ids[0]))
         # input()

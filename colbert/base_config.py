@@ -2,7 +2,7 @@
 # pretrain = "../../../pretrain/chinese_roberta_wwm_ext"
 # pretrain = "../../../pretrain/rbt3"
 # pretrain = "../../../../pretrain/macbert-large/"
-pretrain = "../../../pretrain/bert-base-uncased"
+# pretrain = "../../../pretrain/bert-base-uncased"
 pos_num = 1
 neg_num = 1
 max_pos_sample = 10
@@ -65,4 +65,4 @@ segmenter = lambda x: x
 
 from transformers import BertTokenizerFast
 
-bert_tokenizer = BertTokenizerFast.from_pretrained(pretrain)
+# bert_tokenizer = BertTokenizerFast.from_pretrained(pretrain)

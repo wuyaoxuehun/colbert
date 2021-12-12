@@ -1,7 +1,7 @@
 import torch
 from colbert import base_config
 
-from transformers import BertTokenizerFast
+from transformers import BertTokenizerFast, T5TokenizerFast
 from functools import reduce
 from tqdm import tqdm
 from colbert.base_config import part_weight, puncts, GENERATION_ENDING_TOK
@@ -9,6 +9,7 @@ from typing import List, Any
 import numpy as np
 
 from colbert.utils.func_utils import cache_decorator
+from conf import Q_marker_token, D_marker_token, encoder_tokenizer, CLS, SEP, pretrain_choose
 
 
 def cache_function(*args, **kwargs):
@@ -21,11 +22,14 @@ def cache_function(*args, **kwargs):
     return '-'.join(key)
 
 
-class CostomTokenizer(BertTokenizerFast):
+# class CostomTokenizer(BertTokenizerFast):
+class CostomTokenizer(encoder_tokenizer):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.doc_cache = {}
         self.query_cache = {}
+        if pretrain_choose.find("bert") != -1:
+            self.add_special_tokens({"additional_special_tokens": ["[unused1]", "[unused2]"]})
 
     def truncate_seq(self, tokens_list: List[List[Any]], max_len, keep=None, stategy="longest"):
         if stategy != "longest":
@@ -41,7 +45,7 @@ class CostomTokenizer(BertTokenizerFast):
             all_len = [len(_) for _ in tokens_list]
 
     # @cache_decorator(cache_fun=cache_function)
-    def tokenize_multiple_parts(self, parts=None, max_seq_length=None, weights=None, generation_ending_token_idx=None, keep=(), marker=None):
+    def tokenize_multiple_parts__(self, parts=None, max_seq_length=None, weights=None, generation_ending_token_idx=None, keep=(), marker=None):
         assert len(weights) == len(parts)
         if weights is None:
             weights = [1] * len(parts)
@@ -136,7 +140,36 @@ class CostomTokenizer(BertTokenizerFast):
             (len(input_ids), len(attention_mask), len(word_pos0_mask))
         return input_ids, attention_mask, word_pos0_mask, cur_segments
 
-    def tokenize_q_noopt_segmented_dict(self, batch_examples, max_seq_length, answer_max_seq_length=64):
+    @cache_decorator(cache_fun=cache_function)
+    def tokenize_multiple_parts(self, parts=None, max_seq_length=None, weights=None, generation_ending_token_idx=None, keep=(), marker_token=None):
+        assert len(weights) == len(parts)
+        if weights is None:
+            weights = [1] * len(parts)
+
+        nparts = len(parts)
+        input_sequence = CLS + marker_token + SEP.join(parts) + SEP
+        # convert_tokens_to_ids, batch_encode_plus
+        encoding = self.encode_plus(input_sequence,
+                                    padding='max_length',
+                                    max_length=max_seq_length,
+                                    truncation=True,
+                                    add_special_tokens=False)
+        input_ids = encoding['input_ids']
+        attention_mask = encoding['attention_mask']
+        # print(sum(attention_mask))
+        # print(input_sequence)
+        # print(input_ids)
+        # print(attention_mask)
+        # input()
+
+        # word_pos0_mask = [1] + word_pos0_mask[:(max_seq_length - padding_length)] + [0] + [0] * padding_length
+        word_pos0_mask = attention_mask
+        cur_segments = [' '] * len(input_ids)
+        assert len(input_ids) == len(attention_mask) == len(word_pos0_mask) == max_seq_length, \
+            (len(input_ids), len(attention_mask), len(word_pos0_mask))
+        return input_ids, attention_mask, word_pos0_mask, cur_segments
+
+    def tokenize_q_noopt_segmented_dict(self, batch_examples, max_seq_length, answer_max_seq_length=64, marker_token=None):
         input_ids_all = []
         attention_mask_all = []
         word_pos0_mask_all = []
@@ -152,7 +185,7 @@ class CostomTokenizer(BertTokenizerFast):
             enum = [question]
             input_ids, attention_mask, word_pos0_mask, cur_segments = \
                 self.tokenize_multiple_parts(parts=enum, max_seq_length=max_seq_length, weights=[1] * len(enum),
-                                             generation_ending_token_idx=None, keep=[])
+                                             generation_ending_token_idx=None, keep=[], marker_token=Q_marker_token)
 
             input_ids_all.append(input_ids)
             attention_mask_all.append(attention_mask)
@@ -163,7 +196,7 @@ class CostomTokenizer(BertTokenizerFast):
             enum = answers
             input_ids, attention_mask, word_pos0_mask, cur_segments = \
                 self.tokenize_multiple_parts(parts=enum, max_seq_length=answer_max_seq_length, weights=[1] * len(enum),
-                                             generation_ending_token_idx=None, keep=[])
+                                             generation_ending_token_idx=None, keep=[], marker_token=Q_marker_token)
 
             ans_input_ids_all.append(input_ids)
             ans_attention_mask_all.append(attention_mask)
@@ -187,7 +220,7 @@ class CostomTokenizer(BertTokenizerFast):
                 t['title'] = t['title'][1:-1]
             doc = [t['title'], t['text']]
             input_ids, attention_mask, word_pos0_mask, cur_segments = \
-                self.tokenize_multiple_parts(parts=doc, max_seq_length=max_seq_length, weights=[1] * 2, generation_ending_token_idx=None, keep=[], marker=marker)
+                self.tokenize_multiple_parts(parts=doc, max_seq_length=max_seq_length, weights=[1] * 2, generation_ending_token_idx=None, keep=[], marker_token=D_marker_token)
 
             input_ids_all.append(input_ids)
             attention_mask_all.append(attention_mask)

@@ -2,18 +2,19 @@ import torch
 
 from colbert.modeling.tokenization.utils import _split_into_batches, _split_into_batches_bundle, CostomTokenizer
 from colbert import base_config
-from conf import answer_max_seqlen
+from conf import answer_max_seqlen, Q_marker_token, pretrain
 
 
-class QueryTokenizer():
+class QueryTokenizer:
     def __init__(self, query_maxlen, segmenter=None):
-        self.tok = CostomTokenizer.from_pretrained(base_config.pretrain)
+        self.tok = CostomTokenizer.from_pretrained(pretrain)
         self.query_maxlen = query_maxlen
         self.segmenter = segmenter
-        self.Q_marker_token, self.Q_marker_token_id = '[Q]', self.tok.convert_tokens_to_ids('[unused1]')
-        self.cls_token, self.cls_token_id = self.tok.cls_token, self.tok.cls_token_id
-        self.sep_token, self.sep_token_id = self.tok.sep_token, self.tok.sep_token_id
-        self.mask_token, self.mask_token_id = self.tok.mask_token, self.tok.mask_token_id
+        # self.Q_marker_token, self.Q_marker_token_id = '[Q]', self.tok.convert_tokens_to_ids('[unused1]')
+        self.Q_marker_token, self.Q_marker_token_id = '[Q]', self.tok.convert_tokens_to_ids(Q_marker_token)
+        # self.cls_token, self.cls_token_id = self.tok.cls_token, self.tok.cls_token_id
+        # self.sep_token, self.sep_token_id = self.tok.sep_token, self.tok.sep_token_id
+        # self.mask_token, self.mask_token_id = self.tok.mask_token, self.tok.mask_token_id
 
         # assert self.Q_marker_token_id == 1 and self.mask_token_id == 103
 
@@ -119,8 +120,8 @@ class QueryTokenizer():
         answer_ids, ans_mask, answer_word_mask, answer_tokens = obj[1]
 
         # postprocess for the [Q] marker and the [MASK] augmentation
-        ids[:, 1] = self.Q_marker_token_id
-        answer_ids[:, 1] = self.Q_marker_token_id
+        # ids[:, 1] = self.Q_marker_token_id
+        # answer_ids[:, 1] = self.Q_marker_token_id
         # print(self.tok.convert_ids_to_tokens(ids[0]))
         # print(self.tok.convert_ids_to_tokens(answer_ids[0]))
         # input()

@@ -1,6 +1,7 @@
-from transformers import BertGenerationEncoder, BertGenerationDecoder, EncoderDecoderModel, BertTokenizer
+from transformers import BertGenerationEncoder, BertGenerationDecoder, EncoderDecoderModel, BertTokenizer, T5Config, T5ForConditionalGeneration, T5Tokenizer, T5TokenizerFast, T5Model, T5EncoderModel, \
+    AutoModel, AutoTokenizer, AutoConfig
 import torch
-from conf import pretrain_map
+from conf import pretrain_map, encoder_tokenizer, pretrain
 
 path = pretrain_map['bert']
 tokenizer = BertTokenizer.from_pretrained(path)
@@ -118,9 +119,61 @@ def train_generation():
     print(output)
 
 
+def test_t5():
+    # AutoModel, AutoTokenizer, AutoConfig
+    path = "google/t5-v1_1-base"
+    # path = pretrain_map['t5_base']
+    config = AutoConfig.from_pretrained(path, cache_dir=pretrain_map['t5_base_1_1'])
+    print(config)
+    tokenizer = T5TokenizerFast.from_pretrained(path, cache_dir=pretrain_map['t5_base_1_1'])
+    input_ids = tokenizer('translate English to German: The house is wonderful.', return_tensors='pt').input_ids
+    labels = tokenizer('Das Haus ist wunderbar.', return_tensors='pt').input_ids
+    # the forward function automatically creates the correct decoder_input_ids
+    # output = model(input_ids=input_ids, labels=labels)
+    decoder_input_ids = tokenizer(tokenizer.pad_token, return_tensors='pt').input_ids
+
+    print(config.d_model)
+
+    print(decoder_input_ids, tokenizer.pad_token)
+    print(config.sep_token_id, config.bos_token_id, tokenizer.eos_token)
+    max_source_length = 16
+    tokens = tokenizer.tokenize("<extra_id_0>" + "</s>" + " beijing ")
+    ids = tokenizer.convert_tokens_to_ids(tokens)
+    print(ids)
+    input_ids = tokenizer("",
+                          padding='longest',
+                          max_length=max_source_length,
+                          truncation=True,
+                          return_tensors='pt')
+    print(input_ids)
+    # exit()
+    print(config.num_decoder_layers)
+    model = T5EncoderModel.from_pretrained(path, cache_dir=pretrain_map['t5_base_1_1'])
+    # model = T5Model.from_pretrained(path)
+
+    # output = model(input_ids=input_ids, decoder_input_ids=decoder_input_ids, return_dict=True)
+    output = model(input_ids=input_ids['input_ids'], return_dict=True)
+    print(type(output))
+
+    outputs = model.generate(input_ids=input_ids, output_hidden_states=True, return_dict_in_generate=True)
+    print(type(outputs))
+
+    print(tokenizer.decode(outputs.sequences[0], skip_special_tokens=True))
+    # print(loss)
+
+
+def test_tok():
+    tokenizer = encoder_tokenizer.from_pretrained(pretrain)
+    tokenizer.add_special_tokens({"additional_special_tokens": ["[unused1]"]})
+    encoder = tokenizer.batch_encode_plus(["[unused1]"])
+    print(encoder)
+
+
 if __name__ == '__main__':
     # test_encoder_decoder()
     # test_mask()
     # test_generate()
     # test_conditional_generation()
-    train_generation()
+    # train_generation()
+    test_t5()
+    # test_tok()

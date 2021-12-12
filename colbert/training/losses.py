@@ -24,6 +24,7 @@ def BiEncoderNllLoss(
         scores,
         positive_idx_per_question: list,
         hard_negative_idx_per_question: list = None,
+        dual=False
 ):
     """
     Computes nll loss for the given lists of question and ctx vectors.
@@ -31,13 +32,21 @@ def BiEncoderNllLoss(
     loss modifications. For example - weighted NLL with different factors for hard vs regular negatives.
     :return: a tuple of loss value and amount of correct predictions per batch
     """
+    # eps = 0
+    # print(torch.isfinite(scores))
+    # print((scores != scores).any())
     softmax_scores = F.log_softmax(scores, dim=1)
+    # print(scores[0])
+    # print(softmax_scores[0])
+
     loss = F.nll_loss(
         softmax_scores,
         torch.tensor(positive_idx_per_question).to(softmax_scores.device),
         reduction="mean",
     )
-
+    # input(loss)
+    if not dual:
+        return loss
     dual_scores = scores[:, ::2].T
     dual_softmax_scores = F.log_softmax(dual_scores, dim=1)
     dual_loss = F.nll_loss(
