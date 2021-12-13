@@ -1,6 +1,6 @@
 from transformers import BertTokenizerFast
 
-from colbert.base_config import pretrain
+from conf import pretrain
 from colbert.base_config import ColBert
 from colbert.parameters import DEVICE
 from colbert.utils.utils import print_message, load_checkpoint

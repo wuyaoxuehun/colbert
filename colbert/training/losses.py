@@ -22,8 +22,8 @@ def binary_listnet(y_pred, y_true):
 
 def BiEncoderNllLoss(
         scores,
-        positive_idx_per_question: list,
-        hard_negative_idx_per_question: list = None,
+        positive_idx_per_question,
+        hard_negative_idx_per_question,
         dual=False
 ):
     """

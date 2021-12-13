@@ -194,7 +194,7 @@ class ColbertRetriever(DenseFaissRetriever):
         print_message("Done indexing!")
         output_path = os.path.join(self.index_path, "ivfpq.2000.faiss")
         print_message(f"#> writing to {output_path}.")
-        colbert_faiss_index.save(self.index_path)
+        colbert_faiss_index.save(output_path)
 
     def search(self, query, topk_doc=None):
         Q, q_word_mask = query

@@ -21,12 +21,12 @@ def index_by_model(args):
     colbert_qa.load(args.checkpoint + "/pytorch.bin")
     args.query_maxlen, args.doc_maxlen = colbert_config['query_maxlen'], colbert_config['doc_maxlen']
     args.dim = colbert_config['dim']
-    colbert_qa.colbert.to("cuda")
+    colbert_qa.to("cuda")
     if args.distributed:
-        colbert_qa.colbert = DDP(colbert_qa.colbert, device_ids=[args.rank], find_unused_parameters=True).module
+        colbert_qa = DDP(colbert_qa, device_ids=[args.rank], find_unused_parameters=True).module
 
     print(args.rank, args.nranks)
-    encoder = CollectionEncoder(args, process_idx=args.rank, num_processes=args.nranks, model=colbert_qa.colbert)
+    encoder = CollectionEncoder(args, process_idx=args.rank, num_processes=args.nranks, model=colbert_qa)
     encoder.encode_simple()
     print('encoded all ')
     if args.rank == 0:

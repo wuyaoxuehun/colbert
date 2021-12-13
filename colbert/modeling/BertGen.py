@@ -119,7 +119,7 @@ def train_generation():
     print(output)
 
 
-def test_t5():
+def test_t5_():
     # AutoModel, AutoTokenizer, AutoConfig
     path = "google/t5-v1_1-base"
     # path = pretrain_map['t5_base']
@@ -159,6 +159,36 @@ def test_t5():
     print(type(outputs))
 
     print(tokenizer.decode(outputs.sequences[0], skip_special_tokens=True))
+    # print(loss)
+
+
+def test_t5():
+    # AutoModel, AutoTokenizer, AutoConfig
+    path = "google/t5-v1_1-base"
+    # path = pretrain_map['t5_base']
+    path = pretrain_map["t5_base"]
+    config = AutoConfig.from_pretrained(path)
+    print(config)
+    tokenizer = T5TokenizerFast.from_pretrained(path)
+    input_ids = tokenizer(['translate English to German: The house is wonderful. I like it!', 'translate English to German: The house is wonderful.',
+                           'translate English to German: the']
+                          , return_tensors='pt', padding=True, truncation=True).input_ids
+    labels = tokenizer('Das Haus ist wunderbar.', return_tensors='pt').input_ids
+    model = T5ForConditionalGeneration.from_pretrained(path)
+
+    # output = model(input_ids=input_ids, decoder_input_ids=decoder_input_ids, return_dict=True)
+    # output = model(input_ids=input_ids['input_ids'],  return_dict=True)
+    # print(type(output))
+
+    outputs = model.generate(input_ids=input_ids, output_hidden_states=True, return_dict_in_generate=True, min_length=10)
+    print(type(outputs))
+    print(len(outputs.decoder_hidden_states))
+    print([torch.cat(_, dim=1).size() for _ in outputs.decoder_hidden_states])
+    print(torch.cat([_[-1] for _ in outputs.decoder_hidden_states], dim=1).size())
+
+    for i in range(len(outputs.sequences)):
+        print(len(tokenizer.decode(outputs.sequences[i], skip_special_tokens=False)))
+        print((tokenizer.decode(outputs.sequences[i], skip_special_tokens=False)))
     # print(loss)
 
 

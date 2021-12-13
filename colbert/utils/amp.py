@@ -6,7 +6,7 @@ from colbert.utils.utils import NullContextManager
 # PyTorch_over_1_6 = float('.'.join(torch.__version__.split('.')[0:2])) >= 1.6
 
 
-class MixedPrecisionManager():
+class MixedPrecisionManager:
     def __init__(self, activated):
         # assert (not activated) or PyTorch_over_1_6, "Cannot use AMP for PyTorch version < 1.6"
 
@@ -16,7 +16,8 @@ class MixedPrecisionManager():
             self.scaler = torch.cuda.amp.GradScaler()
 
     def context(self):
-        return torch.cuda.amp.autocast() if self.activated else NullContextManager()
+        # return torch.cuda.amp.autocast() if self.activated else NullContextManager()
+        return torch.autocast(dtype=torch.bfloat16, device_type="cuda") if self.activated else NullContextManager()
 
     def backward(self, loss):
         if self.activated:
@@ -42,5 +43,3 @@ class MixedPrecisionManager():
             for optimizer in optimizers:
                 self.scaler.step(optimizer)
             self.scaler.update()
-
-

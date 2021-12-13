@@ -5,7 +5,7 @@ from colbert import base_config
 from conf import D_marker_token, pretrain
 
 
-class DocTokenizer():
+class DocTokenizer:
     def __init__(self, doc_maxlen, segmenter=None):
         self.tok = CostomTokenizer.from_pretrained(pretrain)
         self.doc_maxlen = doc_maxlen

@@ -27,13 +27,16 @@ def faiss_index_by_encoded(args):
     print("#> num_embeddings =", num_embeddings)
     # if args.partitions is None:
     args.partitions = get_best_partitons(num_embeddings)
-    if True:
+    print('best partitions = ', args.partitions)
+    if False:
         from colbert.indexing.faiss_indexers import DPRRetriever
         dpr_retriever = DPRRetriever(index_path=args.index_path, dim=dim)
         dpr_retriever.encode_corpus(encoded_corpus_path=args.index_path)
     else:
-        index_faiss_simple(args)
-
+        # index_faiss_simple(args)
+        from colbert.indexing.faiss_indexers import ColbertRetriever
+        retriever = ColbertRetriever(index_path=args.index_path, dim=dim, rank=None, index_config=None, partitions=args.partitions, sample=args.sample)
+        retriever.encode_corpus(encoded_corpus_path=args.index_path)
 
 if __name__ == '__main__':
     parser = Arguments(description='Faiss indexing for end-to-end retrieval with ColBERT.')

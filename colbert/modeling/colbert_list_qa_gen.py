@@ -176,30 +176,41 @@ class ColBERT_List_qa(nn.Module):
                               truncation=True,
                               return_tensors="pt")['input_ids'].to(DEVICE)
 
-    def query(self, input_ids, attention_mask, **kwargs):
+    def query(self, input_ids, attention_mask, decoder_labels=None, **kwargs):
         input_ids, attention_mask = input_ids.to(DEVICE), attention_mask.to(DEVICE)
-        # Q = self.t5(input_ids, attention_mask=attention_mask, return_dict=True, decoder_input_ids=self.get_dummy_labels(n=input_ids.size(0))).encoder_last_hidden_state
-        Q = self.model(input_ids, attention_mask=attention_mask, return_dict=True).last_hidden_state
+        ar_loss = None
+        if decoder_labels is not None:
+            output = self.model(input_ids, attention_mask=attention_mask, return_dict=True, labels=decoder_labels)
+            Q = output.encoder_last_hidden_state
+            ar_loss = output.loss
+        else:
+            Q = self.model(input_ids, attention_mask=attention_mask, return_dict=True).last_hidden_state
+        # Q = Q.to(torch.float32)
+        # Q = self.model(input_ids, attention_mask=attention_mask, return_dict=True).last_hidden_state
         # Q = self.linear_q(Q)
         Q = self.linear(Q)
         Q = torch.nn.functional.normalize(Q, p=2, dim=2)
+        if decoder_labels is not None:
+            return Q, ar_loss
         return Q
 
     def doc(self, input_ids, attention_mask, **kwargs):
         # input_ids, attention_mask = input_ids.to(DEVICE), attention_mask.to(DEVICE)
         # D = self.t5(input_ids, attention_mask=attention_mask, return_dict=True, labels=self.get_dummy_labels(n=input_ids.size(0))).encoder_last_hidden_state
-        print("inputIds", input_ids[-3, ...], attention_mask[-3, ...])
-        D = self.model(input_ids, attention_mask=attention_mask, return_dict=True).last_hidden_state
-        print("123424", D[-3, 0, ...])
+        # print("inputIds", input_ids[-3, ...], attention_mask[-3, ...])
+        D = self.model.encoder(input_ids, attention_mask=attention_mask, return_dict=True).last_hidden_state
+        # D = D.to(torch.float32)
+
+        # print("123424", D[-3, 0, ...])
         # D = self.linear_d(D)
         D = self.linear(D)
-        print("123", D[-3, 0, ...])
+        # print("123", D[-3, 0, ...])
         D = torch.nn.functional.normalize(D, p=2, dim=2)
         return D
 
     def score(self, Q, D, q_mask=None, d_mask=None):
-        print(Q.size(), D.size(), q_mask.size(), d_mask.size())
-        input()
+        # print(Q.size(), D.size(), q_mask.size(), d_mask.size())
+        # input()
         # print(D[-3, 0, ...])
         if d_mask is not None and q_mask is not None:
             D = D * d_mask[..., None]
@@ -207,9 +218,28 @@ class ColBERT_List_qa(nn.Module):
 
         scores = einsum("qmh,dnh->qdmn", Q, D).max(-1)[0].sum(-1)
         # if not torch.isfinite(scores[0]):
-        print(scores[0][-4:], scores[1][-4:])
-        input()
+        # print(scores[0][-4:], scores[1][-4:])
+        # input()
         return scores
+
+    def generate_aug_Q(self, input_ids):
+        with torch.no_grad():
+            # D = self.model.generate(input_ids=input_ids, output_hidden_states=True, return_dict_in_generate=True, min_length=10, num_beams=5, num_return_sequences=3)
+            Q = self.model.generate(input_ids=input_ids, do_sample=False, output_hidden_states=True, return_dict_in_generate=True, min_length=query_aug_topk).decoder_hidden_states
+            Q = torch.cat([_[-1] for _ in Q[:query_aug_topk]], dim=1)
+            Q = self.linear(Q)
+            Q = torch.nn.functional.normalize(Q, p=2, dim=2)
+            return Q
+
+    def augment_query(self, input_ids, attention_mask, q_word_mask, decoder_labels=None):
+        if decoder_labels is None:
+            decoder_labels = self.get_dummy_labels(n=input_ids.size(0))
+        Q, ar_loss = self.query(input_ids=input_ids, attention_mask=attention_mask, decoder_labels=decoder_labels)
+        aug_Q = self.generate_aug_Q(input_ids)
+        Q = torch.cat([Q, aug_Q], dim=1)
+        aug_mask = torch.ones((Q.size(0), query_aug_topk), dtype=torch.long).to(q_word_mask.device)
+        q_word_mask = torch.cat([q_word_mask, aug_mask], dim=1)
+        return Q, q_word_mask, ar_loss
 
     def reconstruct_forward(self, input_ids, hidden_states):
         # encoder_hidden_states = Q[:, 0:1, ...]
@@ -227,13 +257,14 @@ class ColBERT_List_qa(nn.Module):
     def forward(self, batch, train_dataset, is_evaluating=False, merge=False, doc_enc_training=False, eval_p_num=None, is_testing_retrieval=False, pad_p_num=None):
         obj = train_dataset.tokenize_for_retriever(batch)
         ids, mask, q_word_mask = [_.to(DEVICE) for _ in obj[0]]
-        # answer_ids, answer_mask, answer_word_mask = [_.to(DEVICE) for _ in obj[1]]
+        answer_ids, answer_mask, answer_word_mask = [_.to(DEVICE) for _ in obj[1]]
         # Q = model.colbert.query(ids, mask)
         # print(batch[0]['question'], '\n', batch[0]['A'], '\n', d_paras[0][:2])
         # input()
         if is_testing_retrieval:
             # Q = self.colbert.query(ids, q_word_mask)
-            Q = self.query(ids, q_word_mask)
+            # Q = self.query(ids, q_word_mask)
+            Q, q_word_mask, ar_loss = self.augment_query(ids, mask, q_word_mask)
             retrieval_scores, d_paras = self.retriever_forward(Q, q_word_mask=q_word_mask, labels=None)
             model_helper.merge_to_reader_input(batch, d_paras)
             return
@@ -246,7 +277,8 @@ class ColBERT_List_qa(nn.Module):
 
         assert CrossEntropyLoss().ignore_index == -100
         ignore_index = CrossEntropyLoss().ignore_index
-        Q = self.query(ids, mask)
+        # Q = self.query(ids, mask)
+        Q, q_word_mask, ar_loss = self.augment_query(ids, mask, q_word_mask, answer_ids)
         if False:
             answer_reconstruction_loss = self.reconstruct_forward(answer_ids, Q[:, 1, ...])
             # reconstruction_criterion(reconstruction_text, answer_ids[:, 1:].reshape(-1))
@@ -290,7 +322,7 @@ class ColBERT_List_qa(nn.Module):
         # return scores, D_scores, answer_reconstruction_loss
         # return scores, answer_reconstruction_loss
         # return scores, query_reconstruction_loss, doc_reconstruction_loss
-        return Q1.contiguous(), q_word_mask.contiguous(), D.contiguous(), d_word_mask.contiguous()
+        return Q1.contiguous(), q_word_mask.contiguous(), D.contiguous(), d_word_mask.contiguous(), ar_loss
         # return scores
         # return scores, D_scores
 

@@ -82,5 +82,5 @@ def modify_word_pos_mask():
 
 
 if __name__ == '__main__':
-    # pre_tokenize_corpus()
-    modify_word_pos_mask()
+    pre_tokenize_corpus()
+    # modify_word_pos_mask()
