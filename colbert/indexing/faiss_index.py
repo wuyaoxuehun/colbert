@@ -21,7 +21,8 @@ class FaissIndex():
 
     def _create_index(self):
         # quantizer = faiss.IndexFlatL2(self.dim)  # faiss.IndexHNSWFlat(dim, 32)
-        quantizer = faiss.IndexFlatIP(self.dim)
+        # quantizer = faiss.IndexFlatIP(self.dim)
+        quantizer = faiss.IndexFlatL2(self.dim)
         # index = faiss.IndexIVFPQ(quantizer, self.dim, self.partitions, 16, 8)
         # index = faiss.IndexIVFPQ(quantizer, self.dim, self.partitions, 32, 8)
         index = faiss.IndexIVFPQ(quantizer, self.dim, self.partitions, 16, 8)

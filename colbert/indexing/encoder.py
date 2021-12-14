@@ -20,6 +20,8 @@ import json
 from colbert.utils.distributed import barrier
 from tqdm import tqdm
 
+from conf import doc_maxlen, pretrain_choose
+
 
 class CollectionEncoder():
     def __init__(self, args, process_idx, num_processes, model=None):
@@ -60,38 +62,11 @@ class CollectionEncoder():
         # collection = iter(list(open(self.collection))[50000:])
         base_dir, file_name = os.path.split(self.collection)
         file_prefix, file_ext = os.path.splitext(file_name)
-        pre_tok_file = file_prefix + f'_{self.args.doc_maxlen}_tokenized.pt'
+        pref = file_prefix + f'_{doc_maxlen}_{pretrain_choose}_tokenized'
+        # pre_tok_file = f'{pref}_tokenized.pt'
         # pre_tok_file = file_prefix + '_tokenized_no_word_mask.pt'
-        pre_tok_path = os.path.join(base_dir, pre_tok_file)
-        if not os.path.exists(pre_tok_path) or overwrite:
-            if self.args.rank == 0:
-                collection = open(self.collection, encoding='utf8')
-                collection = json.load(collection)
-                # collection = collection[1:]
-                # collection = collection[:]
-                collection = self.pre_tensorize(collection)
-                torch.save(collection, pre_tok_path)
-        barrier(self.args.rank)
-
-        print_message(f"loading tokenized file from {pre_tok_path}")
+        # pre_tok_path = os.path.join(base_dir, pre_tok_file)
         split_num = 12
-        if self.args.rank == 0 and overwrite:
-            print_message("spliting collection")
-            collection = torch.load(pre_tok_path)
-            all_d_ids, all_d_mask, all_d_word_mask = collection
-            part_len = math.ceil(len(all_d_ids) / split_num)
-            for i in tqdm(range(split_num)):
-                start, end = i * part_len, (i + 1) * part_len
-                d_ids = all_d_ids[start:end]
-                d_mask = all_d_mask[start:end]
-                d_word_mask = all_d_word_mask[start:end]
-                sub_collection_path = file_prefix + f'_{self.args.doc_maxlen}_tokenized_{i}.pt'
-                torch.save([d_ids, d_mask, d_word_mask],
-                           os.path.join(base_dir, sub_collection_path))
-            print_message("collection splitted")
-            exit()
-
-        barrier(self.args.rank)
         collection = [[], [], []]
         part_len = math.floor(split_num / self.args.nranks)
         start, end = self.args.rank * part_len, (self.args.rank + 1) * part_len
@@ -99,7 +74,8 @@ class CollectionEncoder():
             end += 10
         print_message(f"rank{self.args.rank}=[{start}, {end}]")
         for i in range(start, end):
-            sub_collection_path = file_prefix + f'_{self.args.doc_maxlen}_tokenized_{i}.pt'
+            sub_collection_path = f'{pref}_{i}.pt'
+            # input(sub_collection_path)
             collection_path = os.path.join(base_dir, sub_collection_path)
             if not os.path.exists(collection_path):
                 break

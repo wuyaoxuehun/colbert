@@ -22,8 +22,8 @@ def main():
 from colbert.modeling.colbert_list_qa_gen import ModelHelper
 from colbert.indexing.faiss_indexers import DPRRetriever, DenseFlatIndexer
 if __name__ == "__main__":
-    # main()
-    # exit()
+    main()
+    exit()
     from line_profiler import LineProfiler
     import sys
 

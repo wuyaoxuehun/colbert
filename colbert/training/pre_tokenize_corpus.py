@@ -5,7 +5,7 @@ import os
 import torch
 from tqdm import tqdm
 import os
-from conf import doc_maxlen
+from conf import *
 from colbert.modeling.tokenization import DocTokenizer
 import multiprocessing
 from multiprocessing import Pool
@@ -27,7 +27,8 @@ def pre_tokenize_corpus():
     collection_path = "tests/webqdata/webq_corpus.json"
     base_dir, file_name = os.path.split(collection_path)
     file_prefix, file_ext = os.path.splitext(file_name)
-    pre_tok_file = file_prefix + f'_{doc_maxlen}_tokenized.pt'
+    pref = file_prefix + f'_{doc_maxlen}_{pretrain_choose}_tokenized'
+    pre_tok_file = pref + '.pt'
     # pre_tok_file = file_prefix + '_tokenized_no_word_mask.pt'
     pre_tok_path = os.path.join(base_dir, pre_tok_file)
     # if not os.path.exists(pre_tok_path):
@@ -51,7 +52,7 @@ def pre_tokenize_corpus():
         d_ids = all_d_ids[start:end]
         d_mask = all_d_mask[start:end]
         d_word_mask = all_d_word_mask[start:end]
-        sub_collection_path = file_prefix + f'_{doc_maxlen}_tokenized_{i}.pt'
+        sub_collection_path = f'{pref}_{i}.pt'
         torch.save([d_ids, d_mask, d_word_mask],
                    os.path.join(base_dir, sub_collection_path))
     print("collection splitted")

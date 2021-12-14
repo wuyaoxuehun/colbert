@@ -290,8 +290,12 @@ def qd_mask_to_realinput(Q=None, D=None, q_word_mask=None, d_word_mask=None, kee
             Q, q_word_mask = keep_nonzero(Q, q_word_mask)
         output.extend([Q, q_word_mask])
     if D is not None:
-        D = D[:, :D_TOPK, ...]
-        d_word_mask = d_word_mask[:, :D_TOPK, ...]
+        if len(D.size()) == 3:
+            D = D[:, :D_TOPK, ...]
+            d_word_mask = d_word_mask[:, :D_TOPK, ...]
+        else:
+            D = D[:D_TOPK, ...]
+            d_word_mask = d_word_mask[:D_TOPK, ...]
         # d_word_mask = torch.ones_like(d_word_mask)
         if not keep_dim:
             D, d_word_mask = keep_nonzero(D, d_word_mask)

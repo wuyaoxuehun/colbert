@@ -165,8 +165,14 @@ class ColBERT_List_qa(nn.Module):
         # self.config = config
         self.ir_topk = ir_topk
         self.ir_linear = nn.Linear(20, 1)
-        self.tokenizer = T5TokenizerFast.from_pretrained(pretrain)
+        self.tokenizer = encoder_tokenizer.from_pretrained(pretrain)
         # self.dummy_labels = tokenizer
+
+    @property
+    def encoder(self):
+        return self.model.encoder if str(pretrain).find("t5") != -1 else self.model
+
+    # def get_encoder(self):
 
     def get_dummy_labels(self, n):
         # return self.tokenizer(["" for _ in range(n)],
@@ -184,7 +190,7 @@ class ColBERT_List_qa(nn.Module):
             Q = output.encoder_last_hidden_state
             ar_loss = output.loss
         else:
-            Q = self.model(input_ids, attention_mask=attention_mask, return_dict=True).last_hidden_state
+            Q = self.encoder(input_ids, attention_mask=attention_mask, return_dict=True).last_hidden_state
         # Q = Q.to(torch.float32)
         # Q = self.model(input_ids, attention_mask=attention_mask, return_dict=True).last_hidden_state
         # Q = self.linear_q(Q)
@@ -198,7 +204,7 @@ class ColBERT_List_qa(nn.Module):
         # input_ids, attention_mask = input_ids.to(DEVICE), attention_mask.to(DEVICE)
         # D = self.t5(input_ids, attention_mask=attention_mask, return_dict=True, labels=self.get_dummy_labels(n=input_ids.size(0))).encoder_last_hidden_state
         # print("inputIds", input_ids[-3, ...], attention_mask[-3, ...])
-        D = self.model.encoder(input_ids, attention_mask=attention_mask, return_dict=True).last_hidden_state
+        D = self.encoder(input_ids, attention_mask=attention_mask, return_dict=True).last_hidden_state
         # D = D.to(torch.float32)
 
         # print("123424", D[-3, 0, ...])
@@ -261,10 +267,11 @@ class ColBERT_List_qa(nn.Module):
         # Q = model.colbert.query(ids, mask)
         # print(batch[0]['question'], '\n', batch[0]['A'], '\n', d_paras[0][:2])
         # input()
+        Q = self.query(ids, q_word_mask)
+        # Q, q_word_mask, ar_loss = self.augment_query(ids, mask, q_word_mask, answer_ids)
         if is_testing_retrieval:
             # Q = self.colbert.query(ids, q_word_mask)
-            # Q = self.query(ids, q_word_mask)
-            Q, q_word_mask, ar_loss = self.augment_query(ids, mask, q_word_mask)
+            # Q, q_word_mask, ar_loss = self.augment_query(ids, mask, q_word_mask)
             retrieval_scores, d_paras = self.retriever_forward(Q, q_word_mask=q_word_mask, labels=None)
             model_helper.merge_to_reader_input(batch, d_paras)
             return
@@ -278,7 +285,6 @@ class ColBERT_List_qa(nn.Module):
         assert CrossEntropyLoss().ignore_index == -100
         ignore_index = CrossEntropyLoss().ignore_index
         # Q = self.query(ids, mask)
-        Q, q_word_mask, ar_loss = self.augment_query(ids, mask, q_word_mask, answer_ids)
         if False:
             answer_reconstruction_loss = self.reconstruct_forward(answer_ids, Q[:, 1, ...])
             # reconstruction_criterion(reconstruction_text, answer_ids[:, 1:].reshape(-1))
@@ -322,7 +328,7 @@ class ColBERT_List_qa(nn.Module):
         # return scores, D_scores, answer_reconstruction_loss
         # return scores, answer_reconstruction_loss
         # return scores, query_reconstruction_loss, doc_reconstruction_loss
-        return Q1.contiguous(), q_word_mask.contiguous(), D.contiguous(), d_word_mask.contiguous(), ar_loss
+        return Q1.contiguous(), q_word_mask.contiguous(), D.contiguous(), d_word_mask.contiguous()
         # return scores
         # return scores, D_scores
 

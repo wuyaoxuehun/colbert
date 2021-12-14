@@ -268,7 +268,7 @@ class CBQADataset(Dataset):
             if len(example['neg_contexts']) == 0:
                 example['neg_contexts'] = np.random.choice(batch[line_idx-1]['pos_contexts'][:neg_num], replace=True, size=neg_num).tolist()
             if is_evaluating:
-                docs += example['neg_contexts'][:neg_num]
+                docs += example['neg_contexts'][:eval_neg_num]
             else:
                 docs += np.random.choice(example['neg_contexts'][:max_neg], replace=False, size=neg_num).tolist()
 

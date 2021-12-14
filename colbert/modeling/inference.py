@@ -79,18 +79,20 @@ class ModelInference():
                 D_word_weight = None
                 if output_word_weight:
                     batches, D_word_weight = batches
-                batches, d_word_mask = qd_mask_to_realinput(D=batches, d_word_mask=d_word_mask)
+                # batches, d_word_mask = qd_mask_to_realinput(D=batches, d_word_mask=d_word_mask)
                 if not keep_dims:
                     # batches = batches.cpu().to(dtype=torch.float16)
                     # batches, d_word_mask_bool = batches.cpu().to(dtype=torch.float16), d_word_mask.cpu().bool().squeeze(-1)
-                    batches, d_word_mask_bool = batches.cpu().to(dtype=torch.float16), d_word_mask.cpu().bool()#.squeeze(-1)
+                    # batches, d_word_mask_bool = batches.cpu().to(dtype=torch.float16), d_word_mask.cpu().bool()#.squeeze(-1)
+                    batches = batches.cpu().to(dtype=torch.float16)
                     # print(batches.size(), d_word_mask.size(), d_word_mask_bool.size())
                     # input()
                     # batches = [d[dw_mask_bool][:D_TOPK] for d, dw_mask_bool in zip(batches, d_word_mask_bool)]
-                    if D_TOPK <= 2:
-                        batches = [d[:D_TOPK, ...] for d, dw_mask_bool in zip(batches, d_word_mask_bool)]
-                    else:
-                        batches = [d[:D_TOPK][dw_mask_bool][:D_TOPK] for d, dw_mask_bool in zip(batches, d_word_mask_bool)]
+                    # if D_TOPK <= 2:
+                    #     batches = [d[:D_TOPK, ...] for d, dw_mask_bool in zip(batches, d_word_mask_bool)]
+                    # else:
+                    # batches = [d[:D_TOPK][dw_mask_bool][:D_TOPK] for d, dw_mask_bool in zip(batches, d_word_mask_bool)]
+                    batches = [qd_mask_to_realinput(D=d, d_word_mask=dw_mask, keep_dim=False)[0] for d, dw_mask in zip(batches, d_word_mask)]
                     # batches = [d[:1] for idx, d in enumerate(batches)]
                     # batches = [d[:topk_token][d_word_mask_bool[idx][:topk_token]] for idx, d in enumerate(batches)]
                     # batches = [d[:D_TOPK] for idx, d in enumerate(batches)]
