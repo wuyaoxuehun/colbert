@@ -9,7 +9,7 @@ from typing import List, Any
 import numpy as np
 
 from colbert.utils.func_utils import cache_decorator
-from conf import Q_marker_token, D_marker_token, encoder_tokenizer, CLS, SEP, pretrain_choose
+from conf import Q_marker_token, D_marker_token, encoder_tokenizer, CLS, SEP, pretrain_choose, answer_SEP
 
 
 def cache_function(*args, **kwargs):
@@ -141,13 +141,22 @@ class CostomTokenizer(encoder_tokenizer):
         return input_ids, attention_mask, word_pos0_mask, cur_segments
 
     @cache_decorator(cache_fun=cache_function)
-    def tokenize_multiple_parts(self, parts=None, max_seq_length=None, weights=None, generation_ending_token_idx=None, keep=(), marker_token=None):
+    def tokenize_multiple_parts(self, parts=None, max_seq_length=None, weights=None, generation_ending_token_idx=None, keep=(), marker_token=None, add_special_tokens=True):
         assert len(weights) == len(parts)
         if weights is None:
             weights = [1] * len(parts)
+        # if add_special_tokens:
+        #     self.padding_side = "left"
+        #     self.pad_token = self.tokenizer.eos_token  # to avoid an error
+        # else:
+        #     self.padding_side = "right"
+        #     self.pad_token = self.tokenizer.pad_token  # to avoid an error
 
         nparts = len(parts)
-        input_sequence = CLS + marker_token + SEP.join(parts) + SEP
+        if add_special_tokens:
+            input_sequence = CLS + marker_token + SEP.join(parts) + SEP
+        else:
+            input_sequence = answer_SEP.join(parts) + SEP
         # convert_tokens_to_ids, batch_encode_plus
         encoding = self.encode_plus(input_sequence,
                                     padding='max_length',
@@ -196,7 +205,7 @@ class CostomTokenizer(encoder_tokenizer):
             enum = answers
             input_ids, attention_mask, word_pos0_mask, cur_segments = \
                 self.tokenize_multiple_parts(parts=enum, max_seq_length=answer_max_seq_length, weights=[1] * len(enum),
-                                             generation_ending_token_idx=None, keep=[], marker_token=Q_marker_token)
+                                             generation_ending_token_idx=None, keep=[], marker_token=Q_marker_token, add_special_tokens=False)
 
             ans_input_ids_all.append(input_ids)
             ans_attention_mask_all.append(attention_mask)

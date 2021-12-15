@@ -186,9 +186,13 @@ class ColBERT_List_qa(nn.Module):
         input_ids, attention_mask = input_ids.to(DEVICE), attention_mask.to(DEVICE)
         ar_loss = None
         if decoder_labels is not None:
+            decoder_labels[decoder_labels == 0] = -100
             output = self.model(input_ids, attention_mask=attention_mask, return_dict=True, labels=decoder_labels)
             Q = output.encoder_last_hidden_state
             ar_loss = output.loss
+
+            # decoder_labels[decoder_labels == -100] = 0
+            # print(self.tokenizer.decode(decoder_labels[0], skip_special_tokens=False))
         else:
             Q = self.encoder(input_ids, attention_mask=attention_mask, return_dict=True).last_hidden_state
         # Q = Q.to(torch.float32)
@@ -231,8 +235,13 @@ class ColBERT_List_qa(nn.Module):
     def generate_aug_Q(self, input_ids):
         with torch.no_grad():
             # D = self.model.generate(input_ids=input_ids, output_hidden_states=True, return_dict_in_generate=True, min_length=10, num_beams=5, num_return_sequences=3)
-            Q = self.model.generate(input_ids=input_ids, do_sample=False, output_hidden_states=True, return_dict_in_generate=True, min_length=query_aug_topk).decoder_hidden_states
-            Q = torch.cat([_[-1] for _ in Q[:query_aug_topk]], dim=1)
+            outputs = self.model.generate(input_ids=input_ids, do_sample=False, output_hidden_states=True, return_dict_in_generate=True, min_length=query_aug_topk + 1)
+            Q = outputs.decoder_hidden_states
+            # print(self.tokenizer.decode(input_ids[0], skip_special_tokens=False))
+            # print(len(self.tokenizer.decode(outputs.sequences[0], skip_special_tokens=False)))
+            # print((self.tokenizer.decode(outputs.sequences[0], skip_special_tokens=False)))
+            # input()
+            Q = torch.cat([_[-1] for _ in Q[1:query_aug_topk + 1]], dim=1)
             Q = self.linear(Q)
             Q = torch.nn.functional.normalize(Q, p=2, dim=2)
             return Q
@@ -267,8 +276,8 @@ class ColBERT_List_qa(nn.Module):
         # Q = model.colbert.query(ids, mask)
         # print(batch[0]['question'], '\n', batch[0]['A'], '\n', d_paras[0][:2])
         # input()
-        Q = self.query(ids, q_word_mask)
-        # Q, q_word_mask, ar_loss = self.augment_query(ids, mask, q_word_mask, answer_ids)
+        # Q = self.query(ids, q_word_mask)
+        Q, q_word_mask, ar_loss = self.augment_query(ids, mask, q_word_mask, answer_ids)
         if is_testing_retrieval:
             # Q = self.colbert.query(ids, q_word_mask)
             # Q, q_word_mask, ar_loss = self.augment_query(ids, mask, q_word_mask)
@@ -328,7 +337,7 @@ class ColBERT_List_qa(nn.Module):
         # return scores, D_scores, answer_reconstruction_loss
         # return scores, answer_reconstruction_loss
         # return scores, query_reconstruction_loss, doc_reconstruction_loss
-        return Q1.contiguous(), q_word_mask.contiguous(), D.contiguous(), d_word_mask.contiguous()
+        return Q1.contiguous(), q_word_mask.contiguous(), D.contiguous(), d_word_mask.contiguous(), ar_loss
         # return scores
         # return scores, D_scores
 

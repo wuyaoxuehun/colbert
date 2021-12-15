@@ -16,7 +16,7 @@ from colbert.modeling.tokenization.utils import CostomTokenizer
 from colbert.parameters import DEVICE
 from colbert.training.losses import listnet_loss, listMLEWeighted, BiEncoderNllLoss
 from colbert.training.training_utils import SequentialDistributedSampler, moving_average, sample_T_scheduler, split_parameters, MAverage, coef_scheduler, distributed_concat, collection_qd_masks, \
-    mix_qd, pre_batch_enable
+    mix_qd, pre_batch_enable, get_t5_optimizer
 from colbert.training.training_utils import scheduler_neg
 from colbert.utils.amp import MixedPrecisionManager
 from conf import reader_config, colbert_config, model_config, p_num, padded_p_num, index_config, save_model_name, pos_num, neg_num, SCORE_TEMPERATURE, opt_num, pretrain, lr, eval_p_num
@@ -86,7 +86,8 @@ def train(args):
     # optimized_modules = [colbert_qa.module.colbert, colbert_qa.module.decoder]
     # optimized_modules = [colbert_qa.module.colbert]
     if args.distributed:
-        optimized_modules = [[colbert_qa.module.model, colbert_qa.module.linear]]
+        # optimized_modules = [[colbert_qa.module.model, colbert_qa.module.linear]]
+        optimized_modules = [[colbert_qa]]
     else:
         optimized_modules = [[colbert_qa.model, colbert_qa.linear]]
 
@@ -106,7 +107,10 @@ def train(args):
     # retriever_optimizer = torch.optim.Adam([
     #     {'params': params_decay},
     #     {'params': params_no_decay, 'weight_decay': 0.0}], lr=args.retriever_lr, weight_decay=1e-2)
-    retriever_optimizer = torch.optim.Adam(params)
+    if pretrain.find("t5") != -1:
+        retriever_optimizer = get_t5_optimizer(colbert_qa, lr=lr)
+    else:
+        retriever_optimizer = torch.optim.Adam(params)
     # retriever_optimizer = bnb.optim.Adam8bit(filter(lambda p: p.requires_grad, colbert_qa.module.colbert.parameters()), lr=args.retriever_lr)
 
     # optimizer = AdamW(filter(lambda p: p.requires_grad, colbert_qa.reader.parameters()), lr=args.lr, eps=1e-8)
@@ -198,7 +202,7 @@ def train(args):
                 # scores, query_reconstruction_loss, doc_reconstruction_loss = \
                 # scores = \
                 # torch.autograd.set_detect_anomaly(True)
-                Q, q_word_mask, D, d_word_mask = \
+                Q, q_word_mask, D, d_word_mask, cur_ar_loss = \
                     model(batch, train_dataset, merge=False, doc_enc_training=True, pad_p_num=padded_p_num)
                 # scores, D_scores = model(batch, train_dataset, merge=False, doc_enc_training=True, pad_p_num=padded_p_num)
 
@@ -230,20 +234,23 @@ def train(args):
                 #         q_word_mask = torch.cat([q_word_mask, q_word_mask1], dim=0)
                 #         D = torch.cat([D, d1], dim=0)
                 #         d_word_mask = torch.cat([d_word_mask, d_word_mask1], dim=0)
-                if args.distributed:
-                    scores = model.module.score(Q, D, q_mask=q_word_mask, d_mask=d_word_mask)
-                else:
-                    scores = model.score(Q, D, q_mask=q_word_mask, d_mask=d_word_mask)
-                # scores[aug_mask.bool()] = -1e4
+                cur_retriever_loss = torch.tensor(0.0).cuda()
+                if False:
+                    if args.distributed:
+                        scores = model.module.score(Q, D, q_mask=q_word_mask, d_mask=d_word_mask)
+                    else:
+                        scores = model.score(Q, D, q_mask=q_word_mask, d_mask=d_word_mask)
 
-                # scores = (scores / q_word_mask.bool().sum(1)[:, None])
-                positive_idxes = torch.tensor([_ * p_num for _ in range(Q.size(0))])
-                # retriever_loss = retriever_criterion(y_pred=scores, y_true=retriever_labels[:scores.size(0), :scores.size(1)])
-                # cur_retriever_loss = retriever_criterion(y_pred=scores / SCORE_TEMPERATURE, y_true=retriever_labels[:scores.size(0), :scores.size(1)], neg_weight_mask=neg_weight_mask)
-                # cur_retriever_loss = retriever_criterion(y_pred=scores / SCORE_TEMPERATURE, y_true=retriever_labels[:scores.size(0), :], neg_weight_mask=neg_weight_mask)
-                cur_retriever_loss = retriever_criterion(scores=scores / SCORE_TEMPERATURE,
-                                                         positive_idx_per_question=positive_idxes,
-                                                         hard_negative_idx_per_question=None)
+                    # scores[aug_mask.bool()] = -1e4
+
+                    # scores = (scores / q_word_mask.bool().sum(1)[:, None])
+                    positive_idxes = torch.tensor([_ * p_num for _ in range(Q.size(0))])
+                    # retriever_loss = retriever_criterion(y_pred=scores, y_true=retriever_labels[:scores.size(0), :scores.size(1)])
+                    # cur_retriever_loss = retriever_criterion(y_pred=scores / SCORE_TEMPERATURE, y_true=retriever_labels[:scores.size(0), :scores.size(1)], neg_weight_mask=neg_weight_mask)
+                    # cur_retriever_loss = retriever_criterion(y_pred=scores / SCORE_TEMPERATURE, y_true=retriever_labels[:scores.size(0), :], neg_weight_mask=neg_weight_mask)
+                    cur_retriever_loss = retriever_criterion(scores=scores / SCORE_TEMPERATURE,
+                                                             positive_idx_per_question=positive_idxes,
+                                                             hard_negative_idx_per_question=None)
                 # cur_retriever_loss = retriever_criterion(y_pred=scores / Temperature, y_true=retriever_labels[:scores.size(0), :scores.size(1)] / Temperature)
                 # word_num = word_mask.sum(-1).unsqueeze(-1)
                 # scores = scores / word_num.cuda()
@@ -271,8 +278,9 @@ def train(args):
                 # total_loss = coef * cur_retriever_loss + (1 - coef) * query_reconstruction_loss + (1 - coef) * 0.5 * doc_reconstruction_loss
                 # total_loss = coef * cur_retriever_loss + (1 - coef) * answer_reconstruction_loss
                 # total_loss = 1 * cur_retriever_loss + (1 - 1) * answer_reconstruction_loss
-                # total_loss = cur_retriever_loss + cur_ar_loss
-                total_loss = cur_retriever_loss
+                # total_loss = cur_retriever_loss * coef + cur_ar_loss
+                total_loss = cur_ar_loss
+                # total_loss = cur_retriever_loss
                 # total_loss = cur_retriever_loss
                 # total_loss = cur_retriever_loss + answer_reconstruction_loss
                 # total_loss = cur_retriever_loss
@@ -293,8 +301,8 @@ def train(args):
                     logger.warning('nan loss')
                 total_loss = distributed_concat(tensor=total_loss.unsqueeze(0), num_total_examples=None).mean()
             re_loss.add(cur_retriever_loss.item() if torch.isfinite(cur_retriever_loss) else 0)
-            tr_loss.add(total_loss.item() if torch.isfinite(total_loss) else 0)
-            # ar_loss.add(cur_ar_loss.item() if torch.isfinite(cur_ar_loss) else 0)
+            tr_loss.add(total_loss.item())
+            ar_loss.add(cur_ar_loss.item())
             # ar_loss.add(distributed_concat(tensor=answer_reconstruction_loss.unsqueeze(0), num_total_examples=1).mean().item())
             # avg_qr_loss = qr_loss.send(distributed_concat(tensor=query_reconstruction_loss.unsqueeze(0), num_total_examples=1).mean().item())
             # avg_dr_loss = dr_loss.send(distributed_concat(tensor=doc_reconstruction_loss.unsqueeze(0), num_total_examples=1).mean().item())
@@ -447,7 +455,7 @@ def eval_retrieval(args, colbert_qa=None):
                 # scores, answer_reconstruction_loss = model(batch, train_dataset, is_evaluating=True, merge=False, doc_enc_training=True, eval_p_num=eval_p_num, pad_p_num=eval_pad_p_num)
                 # scores, query_reconstruction_loss, doc_reconstruction_loss\
                 # scores \
-                Q, q_word_mask, D, d_word_mask = \
+                Q, q_word_mask, D, d_word_mask, cur_ar_loss = \
                     model(batch, train_dataset, is_evaluating=True, merge=False, doc_enc_training=True, eval_p_num=eval_p_num, pad_p_num=0)
                 # scores = model(batch, train_dataset, is_evaluating=True, merge=False, doc_enc_training=True, eval_p_num=eval_p_num, pad_p_num=eval_pad_p_num)
                 # pass
@@ -472,15 +480,17 @@ def eval_retrieval(args, colbert_qa=None):
                 if args.distributed:
                     Q, q_word_mask, D, d_word_mask = collection_qd_masks(Q, q_word_mask, D, d_word_mask, args.rank)
                 # scores = model.module.colbert.score(all_Q, all_D, q_mask=all_q_word_mask, d_mask=all_d_word_mask)
-                if args.distributed:
-                    scores = model.module.score(Q, D, q_mask=q_word_mask, d_mask=d_word_mask)
-                else:
-                    scores = model.score(Q, D, q_mask=q_word_mask, d_mask=d_word_mask)
+                cur_retriever_loss = torch.tensor(0.0).cuda()
+                if False:
+                    if args.distributed:
+                        scores = model.module.score(Q, D, q_mask=q_word_mask, d_mask=d_word_mask)
+                    else:
+                        scores = model.score(Q, D, q_mask=q_word_mask, d_mask=d_word_mask)
 
-                positive_idxes = torch.tensor([_ * eval_p_num for _ in range(Q.size(0))])
-                cur_retriever_loss = retriever_criterion(scores=scores / SCORE_TEMPERATURE,
-                                                         positive_idx_per_question=positive_idxes,
-                                                         hard_negative_idx_per_question=None)
+                    positive_idxes = torch.tensor([_ * eval_p_num for _ in range(Q.size(0))])
+                    cur_retriever_loss = retriever_criterion(scores=scores / SCORE_TEMPERATURE,
+                                                             positive_idx_per_question=positive_idxes,
+                                                             hard_negative_idx_per_question=None)
                 # print(retriever_labels)
                 # input()
                 if (step) % 25 == 111:
@@ -497,7 +507,7 @@ def eval_retrieval(args, colbert_qa=None):
                 # retriever_loss = retriever_criterion(y_pred=scores, y_true=retriever_labels[:scores.size(0), :scores.size(1)])
             # eval_loss += retriever_loss
             re_loss += cur_retriever_loss
-            # ar_loss += cur_ar_loss
+            ar_loss += cur_ar_loss
             # ar_loss.add(cur_ar_loss.item())
             # qr_loss.add(distributed_concat(tensor=query_reconstruction_loss.unsqueeze(0), num_total_examples=1).mean().item())
             # dr_loss.add(distributed_concat(tensor=doc_reconstruction_loss.unsqueeze(0), num_total_examples=1).mean().item())
@@ -561,7 +571,7 @@ def eval_retrieval_for_model(args):
     amp = MixedPrecisionManager(args.amp)
 
     tokenizer = CostomTokenizer.from_pretrained(pretrain)
-    train_dataset = CBQADataset('webq-test-0', tokenizer=tokenizer, doc_maxlen=colbert_config['doc_maxlen'],
+    train_dataset = CBQADataset('webq-train-0', tokenizer=tokenizer, doc_maxlen=colbert_config['doc_maxlen'],
                                 query_maxlen=colbert_config['query_maxlen'], reader_max_seq_length=reader_config['max_seq_length'])
     # t_total = len(train_dataset) // args.gradient_accumulation_steps * args.epoch
     train_sampler = SequentialSampler(train_dataset)

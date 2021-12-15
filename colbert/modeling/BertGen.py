@@ -1,3 +1,4 @@
+from tqdm import tqdm
 from transformers import BertGenerationEncoder, BertGenerationDecoder, EncoderDecoderModel, BertTokenizer, T5Config, T5ForConditionalGeneration, T5Tokenizer, T5TokenizerFast, T5Model, T5EncoderModel, \
     AutoModel, AutoTokenizer, AutoConfig
 import torch
@@ -170,9 +171,13 @@ def test_t5():
     config = AutoConfig.from_pretrained(path)
     print(config)
     tokenizer = T5TokenizerFast.from_pretrained(path)
-    input_ids = tokenizer(['translate English to German: The house is wonderful. I like it!', 'translate English to German: The house is wonderful.',
-                           'translate English to German: the']
+    print(tokenizer.pad_token)
+    exit()
+    input_ids = tokenizer(['''<extra_id_0> who has been married to julia roberts?</s>''']
                           , return_tensors='pt', padding=True, truncation=True).input_ids
+    print(tokenizer.tokenize(
+        '''can be cold and commanding when she needs to be, or warm and loving as Padmé.\"\" In February 2018, Portman reprised the role for a interview-Rap sketch on \"\"Saturday Night Live\"\". In \"\"The Phantom Menace\"\", Padmé Amidala, in her capacity as queen, is addressed as \"\"Your Majesty\"\", \"\"Your Royal Highness\"\" and \"\"Your Highness\"\". Contrary to usage in real monarchies, where the style is fixed and tied to the person's rank, in Lucas's \"\"Star Wars\"\" universe they are apparently interchangeable. After her tenure as monarch ended and she became a member of the Senate, Padmé Amidala was addressed as \"\"Senator Amidala\"\"'''))
+    exit()
     labels = tokenizer('Das Haus ist wunderbar.', return_tensors='pt').input_ids
     model = T5ForConditionalGeneration.from_pretrained(path)
 
@@ -199,11 +204,92 @@ def test_tok():
     print(encoder)
 
 
+def train():
+    path = pretrain_map["t5_base"]
+    from transformers import T5Tokenizer, T5ForConditionalGeneration
+    import torch
+
+    tokenizer = T5Tokenizer.from_pretrained(path)
+    model = T5ForConditionalGeneration.from_pretrained(path)
+
+    # the following 2 hyperparameters are task-specific
+    max_source_length = 512
+    max_target_length = 128
+
+    # Suppose we have the following 2 training examples:
+    input_sequence_1 = "Welcome to NYC"
+    output_sequence_1 = "Bienvenue à NYC"
+
+    input_sequence_2 = "HuggingFace is a company"
+    output_sequence_2 = "HuggingFace est une entreprise"
+
+    # encode the inputs
+    task_prefix = "translate English to French: "
+    input_sequences = [input_sequence_1, input_sequence_2]
+    encoding = tokenizer([task_prefix + sequence for sequence in input_sequences],
+                         padding='longest',
+                         max_length=max_source_length,
+                         truncation=True,
+                         return_tensors="pt")
+    input_ids, attention_mask = encoding.input_ids, encoding.attention_mask
+
+    # encode the targets
+    target_encoding = tokenizer([output_sequence_1, output_sequence_2],
+                                padding='longest',
+                                max_length=max_target_length,
+                                truncation=True)
+    labels = target_encoding.input_ids
+
+    # replace padding token id's of the labels by -100
+    labels = [
+        [(label if label != tokenizer.pad_token_id else -100) for label in labels_example] for labels_example in labels
+    ]
+    labels = torch.tensor(labels)
+
+    # forward pass
+    from colbert.training.training_utils import get_t5_optimizer
+    optimizer = get_t5_optimizer(model)
+    model.cuda()
+    for i in tqdm(range(100)):
+        loss = model(input_ids=input_ids.cuda(), attention_mask=attention_mask.cuda(), labels=labels.cuda()).loss
+        loss.backward()
+        optimizer.step()
+    torch.save(model.state_dict(), "output/testsave/pytorch_model.bin")
+
+
+def anoterh():
+    path = pretrain_map["t5_base"]
+    tokenizer = T5TokenizerFast.from_pretrained(path)
+    print(tokenizer.bos_token, tokenizer.eos_token)
+    exit()
+    tokenizer.padding_side = "left"
+    tokenizer.pad_token = tokenizer.eos_token  # to avoid an error
+
+    # task_prefix = "translate English to French: "
+    task_prefix = ""
+    sentences = ["<extra_id_0> what language they speak in taiwan?</s><pad><pad><pad><pad><pad><pad><pad><pad><pad><pad><pad><pad><pad><pad><pad><pad><pad><pad><pad>",
+                 "HuggingFace est une entreprise"]  # use different length sentences to test batching
+    inputs = tokenizer([task_prefix + sentence for sentence in sentences], return_tensors="pt", padding='max_length', max_length=64, )
+    print(tokenizer.batch_decode(inputs['input_ids']))
+    print(inputs)
+    model = T5ForConditionalGeneration.from_pretrained(path)
+    # model.load_state_dict(torch.load("output/testsave/pytorch_model.bin"))
+    output_sequences = model.generate(
+        input_ids=inputs['input_ids'],
+        attention_mask=inputs['attention_mask'],
+        do_sample=False,  # disable sampling to test if batching affects output
+    )
+
+    print(tokenizer.batch_decode(output_sequences, skip_special_tokens=True))
+
+
 if __name__ == '__main__':
     # test_encoder_decoder()
     # test_mask()
     # test_generate()
     # test_conditional_generation()
     # train_generation()
-    test_t5()
+    # test_t5()
+    anoterh()
+    # train()
     # test_tok()

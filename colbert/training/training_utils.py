@@ -2,6 +2,7 @@ import math
 from functools import wraps
 import torch
 import numpy as np
+from transformers import Adafactor
 
 from conf import Q_TOPK, D_TOPK
 
@@ -77,6 +78,10 @@ def sample_T_scheduler(epoch, total_epoch):
 
 
 def coef_scheduler(epoch, total_epoch):
+    if epoch <= 8:
+        return 0
+    else:
+        return 0
     min_T, max_T = 0.1, 0.9
     # # return max_T
     # return max_T - (max_T - min_T) / (total_epoch - 1) * epoch
@@ -265,6 +270,19 @@ def test_mix_qd():
     q_word_mask = torch.tensor([[1] for _ in range(qn)])
     d_word_mask = torch.tensor([[1] for _ in range(dn)])
     mix_qd(Q, q_word_mask, D, d_word_mask, aug_num=2)
+
+
+def get_t5_optimizer(model, lr=1e-4):
+    optimizer = Adafactor(model.parameters(), lr=lr,
+                          eps=(1e-30, 1e-3),
+                          clip_threshold=1.0,
+                          decay_rate=-0.8,
+                          beta1=None,
+                          weight_decay=0.0,
+                          relative_step=False,
+                          scale_parameter=False,
+                          warmup_init=False)
+    return optimizer
 
 
 def keep_nonzero(Q, q_word_mask):
