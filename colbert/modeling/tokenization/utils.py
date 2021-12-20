@@ -1,4 +1,6 @@
 import torch
+from pyserini.eval.evaluate_dpr_retrieval import has_answers, SimpleTokenizer
+
 from colbert import base_config
 
 from transformers import BertTokenizerFast, T5TokenizerFast
@@ -9,7 +11,8 @@ from typing import List, Any
 import numpy as np
 
 from colbert.utils.func_utils import cache_decorator
-from conf import Q_marker_token, D_marker_token, encoder_tokenizer, CLS, SEP, pretrain_choose, answer_SEP
+from conf import Q_marker_token, D_marker_token, encoder_tokenizer, CLS, SEP, pretrain_choose, answer_SEP, answer_prefix, title_prefix
+from nltk.tokenize import sent_tokenize
 
 
 def cache_function(*args, **kwargs):
@@ -30,6 +33,7 @@ class CostomTokenizer(encoder_tokenizer):
         self.query_cache = {}
         if pretrain_choose.find("bert") != -1:
             self.add_special_tokens({"additional_special_tokens": ["[unused1]", "[unused2]"]})
+        self.dpr_tokenizer = SimpleTokenizer()
 
     def truncate_seq(self, tokens_list: List[List[Any]], max_len, keep=None, stategy="longest"):
         if stategy != "longest":
@@ -141,7 +145,8 @@ class CostomTokenizer(encoder_tokenizer):
         return input_ids, attention_mask, word_pos0_mask, cur_segments
 
     @cache_decorator(cache_fun=cache_function)
-    def tokenize_multiple_parts(self, parts=None, max_seq_length=None, weights=None, generation_ending_token_idx=None, keep=(), marker_token=None, add_special_tokens=True):
+    def tokenize_multiple_parts(self, parts=None, max_seq_length=None, weights=None, generation_ending_token_idx=None, keep=(),
+                                marker_token=None, add_special_tokens=True, prefix=None):
         assert len(weights) == len(parts)
         if weights is None:
             weights = [1] * len(parts)
@@ -156,7 +161,7 @@ class CostomTokenizer(encoder_tokenizer):
         if add_special_tokens:
             input_sequence = CLS + marker_token + SEP.join(parts) + SEP
         else:
-            input_sequence = answer_SEP.join(parts) + SEP
+            input_sequence = (prefix if prefix is not None else "") + answer_SEP.join(parts) + SEP
         # convert_tokens_to_ids, batch_encode_plus
         encoding = self.encode_plus(input_sequence,
                                     padding='max_length',
@@ -189,6 +194,11 @@ class CostomTokenizer(encoder_tokenizer):
         ans_word_pos0_mask_all = []
         ans_all_doc_segments = []
 
+        title_input_ids_all = []
+        title_attention_mask_all = []
+        title_word_pos0_mask_all = []
+        title_all_doc_segments = []
+
         for t in batch_examples:
             question = t['question']
             enum = [question]
@@ -201,20 +211,38 @@ class CostomTokenizer(encoder_tokenizer):
             word_pos0_mask_all.append(word_pos0_mask)
             all_doc_segments.append(cur_segments)
 
+            titles, sents = self.get_relevant_title_and_sents(t, max_title_num=3, max_sents_num=0)
+            # print(titles)
+            # input()
+            # answers = t['answers'][:4] + list(titles)
             answers = t['answers'][:4]
             enum = answers
             input_ids, attention_mask, word_pos0_mask, cur_segments = \
                 self.tokenize_multiple_parts(parts=enum, max_seq_length=answer_max_seq_length, weights=[1] * len(enum),
-                                             generation_ending_token_idx=None, keep=[], marker_token=Q_marker_token, add_special_tokens=False)
+                                             generation_ending_token_idx=None, keep=[], marker_token=Q_marker_token,
+                                             add_special_tokens=False, prefix=None)
+                                             # add_special_tokens=False, prefix=answer_prefix)
 
             ans_input_ids_all.append(input_ids)
             ans_attention_mask_all.append(attention_mask)
             ans_word_pos0_mask_all.append(word_pos0_mask)
             ans_all_doc_segments.append(cur_segments)
 
+            enum = list(titles)
+            input_ids, attention_mask, word_pos0_mask, cur_segments = \
+                self.tokenize_multiple_parts(parts=enum, max_seq_length=answer_max_seq_length, weights=[1] * len(enum),
+                                             generation_ending_token_idx=None, keep=[], marker_token=Q_marker_token,
+                                             add_special_tokens=False, prefix=title_prefix)
+
+            title_input_ids_all.append(input_ids)
+            title_attention_mask_all.append(attention_mask)
+            title_word_pos0_mask_all.append(word_pos0_mask)
+            title_all_doc_segments.append(cur_segments)
+
             # return doc_tokens, doc_words, tok_to_orig_seg_map, word_pos0_mask
-        return (torch.tensor(input_ids_all), torch.tensor(attention_mask_all), torch.tensor(word_pos0_mask_all), all_doc_segments), \
-               (torch.tensor(ans_input_ids_all), torch.tensor(ans_attention_mask_all), torch.tensor(ans_word_pos0_mask_all), ans_all_doc_segments)
+        return (torch.tensor(input_ids_all), torch.tensor(attention_mask_all), torch.tensor(word_pos0_mask_all)), \
+               (torch.tensor(ans_input_ids_all), torch.tensor(ans_attention_mask_all), torch.tensor(ans_word_pos0_mask_all)), \
+               (torch.tensor(title_input_ids_all), torch.tensor(title_attention_mask_all), torch.tensor(title_word_pos0_mask_all))
 
     def tokenize_d_segmented_dict(self, batch_text, max_seq_length, tqdm_enable=False, to_tensor=True, marker=None):
         input_ids_all = []
@@ -241,6 +269,22 @@ class CostomTokenizer(encoder_tokenizer):
         if not to_tensor:
             return input_ids_all, attention_mask_all, word_pos0_mask_all, all_doc_segments
         return torch.tensor(input_ids_all), torch.tensor(attention_mask_all), torch.tensor(word_pos0_mask_all), all_doc_segments
+
+    def get_relevant_title_and_sents(self, t, max_title_num=2, max_sents_num=0):
+        if 'pos_contexts' not in t:
+            return {' '}, set()
+        answers, pos_contexts = t['answers'], t['pos_contexts']
+        titles, sents = set(), set()
+        if len(pos_contexts) == 0 and max_sents_num > 0:
+            titles.add(" ")
+        for ctx in pos_contexts[:max_title_num]:
+            titles.add(ctx['title'])
+        for ctx in pos_contexts[:max_sents_num]:
+            sents = sent_tokenize(text=ctx['text'])
+            for sent in sents:
+                if has_answers(text=sent, answers=answers, tokenizer=self.dpr_tokenizer, regex=False):
+                    sents.add(sent)
+        return titles, sents
 
 
 def tensorize_triples(query_tokenizer, doc_tokenizer, queries, positives, negatives, bsize):

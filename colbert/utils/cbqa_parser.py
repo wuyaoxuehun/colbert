@@ -33,6 +33,8 @@ class CBQAArguments:
         return self.parser.add_argument(*args, **kw_args)
 
     def parse(self):
+        # print(torch.cuda.device_count())
+        # assert torch.cuda.device_count() == 4
         args = self.parser.parse_args()
         # input(torch.cuda.device_count())
         args.nranks, args.distributed = distributed.init(args.rank)

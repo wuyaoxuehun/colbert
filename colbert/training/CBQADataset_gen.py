@@ -130,6 +130,22 @@ class CBQADataset(Dataset):
 
         return data
 
+    def merge_to_reader_input_(self, batch_examples, batch_paras):
+        para_idx = 0
+        assert len(batch_paras) == len(batch_examples)
+        for example in batch_examples:
+            example['paragraph_abcd'] = [{"p_id": _['p_id'],
+                                          "paragraph": ''.join(_['paragraph_cut']['tok'].split()),
+                                          "paragraph_cut": _['paragraph_cut']} for _ in batch_paras[para_idx]]
+            para_idx += 1
+
+    def merge_to_reader_input(self, batch_examples, batch_paras):
+        para_idx = 0
+        assert len(batch_paras) == len(batch_examples)
+        for example in batch_examples:
+            example['contexts'] = batch_paras[para_idx]
+            para_idx += 1
+
     def prepare_eager_data(self):
         if self.eager:
             logger.info("preparing eager data!")
@@ -254,21 +270,51 @@ class CBQADataset(Dataset):
         obj = self.query_tokenizer.tensorize_noopt_dict(batch_text=batch)
         return obj
 
-    def tokenize_for_train_retriever(self, batch: List[Dict], padded_negs=None, eval_p_num=None, is_evaluating=False):
+    def tokenize_for_train_retriever_(self, batch: List[Dict], padded_negs=None, eval_p_num=None, is_evaluating=False):
         docs = []
         # if eval_p_num is None:
         #     eval_p_num = p_num
 
         for line_idx, example in enumerate(batch):
             # docs += example['pos_contexts'][:pos_num]
+            t_pos = example['pos_contexts'][:max_pos]
+            t_neg = example['pos_contexts'][:max_neg]
+            if is_evaluating:
+                docs += t_pos[:pos_num]
+            else:
+                context_random.shuffle(t_pos)
+                docs += t_pos[:pos_num]
+            if len(example['neg_contexts']) == 0:
+                example['neg_contexts'] = np.random.choice(batch[line_idx - 1]['pos_contexts'][:neg_num], replace=True, size=neg_num).tolist()
+            if is_evaluating:
+                docs += t_neg[:eval_neg_num]
+            else:
+                context_random.shuffle(t_neg)
+                docs += t_neg[:neg_num]
+
+        # if padded_negs and False:
+        #     docs += padded_negs
+
+        D_ids, D_mask, D_word_mask = self.doc_tokenizer.tensorize_dict(docs)
+
+        # D_scores = torch.tensor([j for _ in batch for j in self.get_score_for_inst(_, padded_negs, eval_p_num=eval_p_num)])
+        # return D_ids, D_mask, D_word_mask, None
+        return D_ids, D_mask, D_word_mask
+
+    def tokenize_for_train_retriever(self, batch: List[Dict], padded_negs=None, eval_p_num=None, is_evaluating=False):
+        docs = []
+        # if eval_p_num is None:
+        #     eval_p_num = p_num
+
+        for line_idx, example in enumerate(batch):
             if is_evaluating:
                 docs += example['pos_contexts'][:pos_num]
             else:
                 docs += np.random.choice(example['pos_contexts'][:max_pos], replace=False, size=pos_num).tolist()
             if len(example['neg_contexts']) == 0:
-                example['neg_contexts'] = np.random.choice(batch[line_idx-1]['pos_contexts'][:neg_num], replace=True, size=neg_num).tolist()
+                example['neg_contexts'] = np.random.choice(batch[line_idx - 1]['pos_contexts'][:neg_num], replace=True, size=neg_num).tolist()
             if is_evaluating:
-                docs += example['neg_contexts'][:eval_neg_num]
+                docs += example['neg_contexts'][:neg_num]
             else:
                 docs += np.random.choice(example['neg_contexts'][:max_neg], replace=False, size=neg_num).tolist()
 

@@ -141,7 +141,7 @@ class IndexRanker():
 
         assignments = (doclens.unsqueeze(1) > torch.tensor(self.strides).unsqueeze(0) + 1e-6).sum(-1)
 
-        output_pids, output_scores, output_permutation = [],[], []
+        output_pids, output_scores, output_permutation = [], [], []
         one_to_n = torch.arange(len(raw_pids))
         for group_idx, stride in enumerate(self.strides):
             locator = (assignments == group_idx)
@@ -182,7 +182,7 @@ class IndexRanker():
         assert raw_pids == output_pids
 
         # assert raw_pids == output_pids
-        scores_sorter = torch.tensor(output_scores).sort(descending=True) # output_scores...一定要注意cv以后变量名的改变呀！！！
+        scores_sorter = torch.tensor(output_scores).sort(descending=True)  # output_scores...一定要注意cv以后变量名的改变呀！！！
         pids = torch.tensor(pids)[scores_sorter.indices].tolist()[:depth]
 
         # doc_tensors, doc_masks = self.get_doc_embeddings_by_pids(pids)

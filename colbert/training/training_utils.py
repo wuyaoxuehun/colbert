@@ -3,7 +3,7 @@ from functools import wraps
 import torch
 import numpy as np
 from transformers import Adafactor
-
+from torch.distributed import get_rank
 from conf import Q_TOPK, D_TOPK
 
 
@@ -79,9 +79,9 @@ def sample_T_scheduler(epoch, total_epoch):
 
 def coef_scheduler(epoch, total_epoch):
     if epoch <= 8:
-        return 0
+        return 1
     else:
-        return 0
+        return 1
     min_T, max_T = 0.1, 0.9
     # # return max_T
     # return max_T - (max_T - min_T) / (total_epoch - 1) * epoch
@@ -195,9 +195,9 @@ def distributed_concat(tensor, num_total_examples=None, concat=True):
     return res
 
 
-def collection_qd_masks(Q, q_word_mask, D, d_word_mask, rank):
-    data = [Q, q_word_mask, D, d_word_mask]
+def collection_qd_masks(data):
     output = []
+    rank = get_rank()
     for t in data:
         all_t = distributed_concat(t, concat=False)
         # all_t[rank], all_t[0] = all_t[0], t

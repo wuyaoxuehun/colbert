@@ -10,6 +10,9 @@ def listnet_loss(y_pred, y_true, eps=1e-10, *args, **kwargs):
     # return torch.mean(- torch.sum(P_y_i * P_z_i, dim=-1))
 
 
+def kl_loss(y_pred, y_true):
+    return F.kl_div(F.log_softmax(y_pred, dim=-1), F.softmax(y_true, dim=-1), reduction='batchmean')
+
 def binary_listnet(y_pred, y_true):
     softmax_preds = torch.log_softmax(y_pred, dim=1)
     normalizer = torch.unsqueeze(y_true.sum(dim=-1), 1)

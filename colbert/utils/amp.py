@@ -10,7 +10,8 @@ class MixedPrecisionManager:
     def __init__(self, activated):
         # assert (not activated) or PyTorch_over_1_6, "Cannot use AMP for PyTorch version < 1.6"
 
-        self.activated = activated
+        # self.activated = activated
+        self.activated = False
 
         if self.activated:
             self.scaler = torch.cuda.amp.GradScaler()

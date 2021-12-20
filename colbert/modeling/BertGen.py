@@ -260,16 +260,18 @@ def train():
 def anoterh():
     path = pretrain_map["t5_base"]
     tokenizer = T5TokenizerFast.from_pretrained(path)
-    print(tokenizer.bos_token, tokenizer.eos_token)
-    exit()
-    tokenizer.padding_side = "left"
-    tokenizer.pad_token = tokenizer.eos_token  # to avoid an error
+    # print(tokenizer.bos_token, tokenizer.eos_token)
+    # print(tokenizer("</s>"))
+    # exit()
+    # exit()
+    # tokenizer.padding_side = "left"
+    # tokenizer.pad_token = tokenizer.eos_token  # to avoid an error
 
     # task_prefix = "translate English to French: "
     task_prefix = ""
     sentences = ["<extra_id_0> what language they speak in taiwan?</s><pad><pad><pad><pad><pad><pad><pad><pad><pad><pad><pad><pad><pad><pad><pad><pad><pad><pad><pad>",
                  "HuggingFace est une entreprise"]  # use different length sentences to test batching
-    inputs = tokenizer([task_prefix + sentence for sentence in sentences], return_tensors="pt", padding='max_length', max_length=64, )
+    inputs = tokenizer([task_prefix + sentence for sentence in sentences], return_tensors="pt", padding='max_length', max_length=64, truncation=True)
     print(tokenizer.batch_decode(inputs['input_ids']))
     print(inputs)
     model = T5ForConditionalGeneration.from_pretrained(path)
@@ -277,7 +279,98 @@ def anoterh():
     output_sequences = model.generate(
         input_ids=inputs['input_ids'],
         attention_mask=inputs['attention_mask'],
-        do_sample=False,  # disable sampling to test if batching affects output
+        do_sample=False,  # disable sampling to test if batching affects output,
+        num_beams=5
+    )
+
+    print(tokenizer.batch_decode(output_sequences, skip_special_tokens=True))
+
+
+def train_decoder_prefix():
+    path = pretrain_map["t5_base"]
+    from transformers import T5Tokenizer, T5ForConditionalGeneration
+    import torch
+
+    tokenizer = T5Tokenizer.from_pretrained(path)
+    model = T5ForConditionalGeneration.from_pretrained(path)
+
+    # the following 2 hyperparameters are task-specific
+    max_source_length = 512
+    max_target_length = 128
+
+    # Suppose we have the following 2 training examples:
+    input_sequence_1 = "Welcome to NYC"
+    output_sequence_1 = "title: HuggingFace is a company"
+
+    input_sequence_2 = "Welcome to NYC"
+    output_sequence_2 = "sentence: HuggingFace est une entreprise"
+
+    # encode the inputs
+    task_prefix = "query to enrich: "
+    input_sequences = [input_sequence_1, input_sequence_2]
+    encoding = tokenizer([task_prefix + sequence for sequence in input_sequences],
+                         padding='longest',
+                         max_length=max_source_length,
+                         truncation=True,
+                         return_tensors="pt")
+    input_ids, attention_mask = encoding.input_ids, encoding.attention_mask
+
+    # encode the targets
+    target_encoding = tokenizer([output_sequence_1, output_sequence_2],
+                                padding='longest',
+                                max_length=max_target_length,
+                                truncation=True)
+    labels = target_encoding.input_ids
+
+    # replace padding token id's of the labels by -100
+    labels = [
+        [(label if label != tokenizer.pad_token_id else -100) for label in labels_example] for labels_example in labels
+    ]
+    labels = torch.tensor(labels)
+
+    # forward pass
+    from colbert.training.training_utils import get_t5_optimizer
+    optimizer = get_t5_optimizer(model)
+    model.cuda()
+    for i in tqdm(range(100)):
+        loss = model(input_ids=input_ids.cuda(), attention_mask=attention_mask.cuda(), labels=labels.cuda()).loss
+        loss.backward()
+        optimizer.step()
+    torch.save(model.state_dict(), "output/testsave/pytorch_model.bin")
+
+
+path = pretrain_map["t5_base"]
+tokenizer = T5TokenizerFast.from_pretrained(path)
+
+
+def prefix_allowed_tokens_fn(idx, prev_input_ids):
+    types = ["<pad>sentence: ", "<pad>title: "]
+    ids = tokenizer(types[1 - idx], return_tensors="pt", padding='longest', max_length=64, truncation=True, add_special_tokens=False)['input_ids'][0]
+    # input(ids)
+    if len(prev_input_ids) < len(ids):
+        # print([ids[len(prev_input_ids)]])
+        return [ids[len(prev_input_ids)]]
+    return None
+
+
+def test_decoder_prefix():
+    # path = "output/testsave/pytorch_model.bin"
+    task_prefix = "query to enrich: "
+    sentences = ["Welcome to NYC",
+                 "Welcome to NYC"]  # use different length sentences to test batching
+    inputs = tokenizer([task_prefix + sentence for sentence in sentences], return_tensors="pt", padding='max_length', max_length=64, truncation=True)
+    print(tokenizer.batch_decode(inputs['input_ids']))
+    print(inputs)
+    model = T5ForConditionalGeneration.from_pretrained(path)
+
+    model.load_state_dict(torch.load("output/testsave/pytorch_model.bin"))
+
+    output_sequences = model.generate(
+        input_ids=inputs['input_ids'],
+        attention_mask=inputs['attention_mask'],
+        do_sample=True,  # disable sampling to test if batching affects output,
+        prefix_allowed_tokens_fn=prefix_allowed_tokens_fn,
+        num_beams=5
     )
 
     print(tokenizer.batch_decode(output_sequences, skip_special_tokens=True))
@@ -290,6 +383,8 @@ if __name__ == '__main__':
     # test_conditional_generation()
     # train_generation()
     # test_t5()
-    anoterh()
+    # anoterh()
     # train()
     # test_tok()
+    # train_decoder_prefix()
+    test_decoder_prefix()

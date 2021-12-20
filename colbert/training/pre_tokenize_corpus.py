@@ -44,7 +44,8 @@ def pre_tokenize_corpus():
     print(f"loading tokenized file from {pre_tok_path}")
     split_num = 12
     print("spliting collection")
-    collection = torch.load(pre_tok_path)
+    # collection = torch.load(pre_tok_path)
+    collection = res
     all_d_ids, all_d_mask, all_d_word_mask = collection
     part_len = math.ceil(len(all_d_ids) / split_num)
     for i in tqdm(range(split_num)):

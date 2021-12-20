@@ -39,4 +39,5 @@ if __name__ == '__main__':
     parser = Arguments(description='Faiss indexing for end-to-end retrieval with ColBERT.')
     parser.add_index_model_input()
     args = parser.parse()
+    # input(args.checkpoint)
     index_by_model(args)

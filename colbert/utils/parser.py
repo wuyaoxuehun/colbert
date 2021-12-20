@@ -111,7 +111,6 @@ class Arguments():
         self.check_arguments(args)
 
         args.input_arguments = copy.deepcopy(args)
-
         args.nranks, args.distributed = distributed.init(args.rank)
 
         args.nthreads = int(max(os.cpu_count(), faiss.omp_get_max_threads()) * 0.8)

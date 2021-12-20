@@ -1,4 +1,7 @@
+import torch
+print(torch.cuda.device_count())
 from colbert.utils.cbqa_parser import CBQAArguments
+
 from colbert.training.training_cbqa_retrieval_gen import *
 
 
@@ -19,24 +22,24 @@ def main():
         do_eval(args, mode="test")
 
 
-from colbert.modeling.colbert_list_qa_gen import ModelHelper
-from colbert.indexing.faiss_indexers import DPRRetriever, DenseFlatIndexer
+# from colbert.modeling.colbert_list_qa_gen import ModelHelper
+# from colbert.indexing.faiss_indexers import DPRRetriever, DenseFlatIndexer
 if __name__ == "__main__":
+    print(torch.cuda.device_count())
     main()
-    exit()
-    from line_profiler import LineProfiler
-    import sys
+    # from line_profiler import LineProfiler
+    # import sys
 
-    lp = LineProfiler()  # 把函数传递到性能分析器
-    lp.add_function(eval_retrieval_for_model)
-    lp.add_function(ModelHelper.retrieve_for_encoded_queries)
-    lp.add_function(DPRRetriever.search)
-    lp.add_function(DenseFlatIndexer.search_knn)
-
-    lp_wrapper = lp(main)
-    lp_wrapper()
-    # profile.disable()  # 停止分析
-    lp.print_stats(sys.stdout)  # 打印出性能分析结果
+    # lp = LineProfiler()  # 把函数传递到性能分析器
+    # lp.add_function(eval_retrieval_for_model)
+    # lp.add_function(ModelHelper.retrieve_for_encoded_queries)
+    # lp.add_function(DPRRetriever.search)
+    # lp.add_function(DenseFlatIndexer.search_knn)
+    #
+    # lp_wrapper = lp(main)
+    # lp_wrapper()
+    # # profile.disable()  # 停止分析
+    # lp.print_stats(sys.stdout)  # 打印出性能分析结果
     # main()
     # import cProfile
     #

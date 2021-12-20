@@ -10,7 +10,8 @@ def init(rank):
     nranks = 'WORLD_SIZE' in os.environ and int(os.environ['WORLD_SIZE'])
     nranks = max(1, nranks)
     is_distributed = nranks > 1
-    # num_gpus = torch.cuda.device_count()
+    num_gpus = torch.cuda.device_count()
+
     # is_distributed = num_gpus > 1
     if rank == 0:
         print('nranks =', nranks, '\t num_gpus =', torch.cuda.device_count())

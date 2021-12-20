@@ -3,6 +3,7 @@ import json
 import logging
 import os
 from functools import partial
+from multiprocessing.connection import Client
 
 import torch
 import yaml
@@ -12,6 +13,8 @@ from transformers import BertPreTrainedModel, BertGenerationDecoder, T5ForCondit
 import numpy as np
 # from colbert.modeling.colbert_list import ColBERT_List
 # import faiss_indexers
+from transformers.modeling_outputs import BaseModelOutput
+
 from colbert.base_config import ColBert, GENERATION_ENDING_TOK
 from colbert.modeling.tokenization.query_tokenization import QueryTokenizer
 # os.environ['CUDA_VISIBLE_DEVICES'] = "0"
@@ -22,6 +25,8 @@ from colbert.utils.utils import print_message, load_checkpoint
 from corpus_cb import load_all_paras
 from colbert.modeling.reader_models import BertForDHC
 from conf import *
+from conf import teacher_aug
+from colbert.training.losses import kl_loss
 from colbert.training.training_utils import *
 from colbert.modeling.transformer_decoder import TransformerDecoder, Generator, set_parameter_tf, TransformerDecoderState
 from colbert.indexing.faiss_indexers import ColbertRetriever, DPRRetriever
@@ -46,7 +51,7 @@ def load_model(colbert_config, do_print=True):
     return colbert
 
 
-class ModelHelper:
+class ModelHelper_:
     def __init__(self, index_config, rank=0):
         self.query_tokenizer = QueryTokenizer(index_config["query_maxlen"], None)
         self.index_config = index_config
@@ -61,22 +66,6 @@ class ModelHelper:
     # def query_tokenize(self, queries):
     #     Q = self.query_tokenizer.tensorize_allopt_dict(queries)
     #     return Q
-
-    def merge_to_reader_input_(self, batch_examples, batch_paras):
-        para_idx = 0
-        assert len(batch_paras) == len(batch_examples)
-        for example in batch_examples:
-            example['paragraph_abcd'] = [{"p_id": _['p_id'],
-                                          "paragraph": ''.join(_['paragraph_cut']['tok'].split()),
-                                          "paragraph_cut": _['paragraph_cut']} for _ in batch_paras[para_idx]]
-            para_idx += 1
-
-    def merge_to_reader_input(self, batch_examples, batch_paras):
-        para_idx = 0
-        assert len(batch_paras) == len(batch_examples)
-        for example in batch_examples:
-            example['contexts'] = batch_paras[para_idx]
-            para_idx += 1
 
     def retrieve_for_encoded_queries(self, batches, q_word_mask=None, retrieve_topk=10):
         if self.retrieve is None:
@@ -122,6 +111,39 @@ class ModelHelper:
         # batch_paras = [[self.all_paras[np.random.randint(0, len(self.all_paras))] for pid in pids] for pids in batch_pids]
         # return batch_D, batch_D_mask, batch_paras
         return None, None, batch_paras
+
+
+class ModelHelper:
+    def __init__(self, index_config, rank=0):
+        self.conn = None
+        self.all_paras = None
+        # conn.send('close')
+        # can also send arbitrary objects:
+        # conn.send(['a', 2.5, None, int, sum])
+        # conn.close()
+
+    # def query_tokenize(self, queries):
+    #     Q = self.query_tokenizer.tensorize_allopt_dict(queries)
+    #     return Q
+
+    def retrieve_for_encoded_queries(self, batches, q_word_mask=None, retrieve_topk=10):
+        if self.conn is None:
+            address = ('localhost', 6001)
+            self.conn = Client(address, authkey=b'secret password')
+            print('connected to server')
+            self.all_paras = load_all_paras()
+
+        self.conn.send((batches, q_word_mask, retrieve_topk))
+        batch_pids = self.conn.recv()
+        batch_paras = [[self.all_paras[pid] for pid in pids] for pids in batch_pids]
+        # batch_paras = [[self.all_paras[np.random.randint(0, len(self.all_paras))] for pid in pids] for pids in batch_pids]
+        # return batch_D, batch_D_mask, batch_paras
+        return None, None, batch_paras
+
+    def close(self):
+        self.conn.send("close")
+        print("closed")
+        return
 
 
 from conf import index_config, colbert_config, p_num
@@ -182,17 +204,32 @@ class ColBERT_List_qa(nn.Module):
                               truncation=True,
                               return_tensors="pt")['input_ids'].to(DEVICE)
 
-    def query(self, input_ids, attention_mask, decoder_labels=None, **kwargs):
+    def query_(self, input_ids, attention_mask, decoder_labels=None, **kwargs):
         input_ids, attention_mask = input_ids.to(DEVICE), attention_mask.to(DEVICE)
-        ar_loss = None
+        ar_losses = None
+        Q = None
         if decoder_labels is not None:
-            decoder_labels[decoder_labels == 0] = -100
-            output = self.model(input_ids, attention_mask=attention_mask, return_dict=True, labels=decoder_labels)
-            Q = output.encoder_last_hidden_state
-            ar_loss = output.loss
+            if type(decoder_labels) != list:
+                decoder_labels = [decoder_labels]
+            ar_losses = []
+            for idx, decoder_label in enumerate(decoder_labels):
+                decoder_labels[decoder_labels == 0] = -100
+                if idx == 0:
+                    output = self.model(input_ids, attention_mask=attention_mask, return_dict=True, labels=decoder_label)
+                    encoder_outputs = BaseModelOutput(
+                        last_hidden_state=output.encoder_last_hidden_state,
+                        hidden_states=output.encoder_hidden_states,
+                        attentions=output.encoder_attentions
+                    )
+                    Q = output.encoder_last_hidden_state
+                else:
+                    output = self.model(encoder_outputs=encoder_outputs, attention_mask=attention_mask, return_dict=True, labels=decoder_label)
+                ar_loss = output.loss
+                ar_losses.append(ar_loss)
 
-            # decoder_labels[decoder_labels == -100] = 0
-            # print(self.tokenizer.decode(decoder_labels[0], skip_special_tokens=False))
+            if print_generate:
+                decoder_labels[decoder_labels == -100] = 0
+                print(self.tokenizer.decode(decoder_labels[0], skip_special_tokens=True))
         else:
             Q = self.encoder(input_ids, attention_mask=attention_mask, return_dict=True).last_hidden_state
         # Q = Q.to(torch.float32)
@@ -201,7 +238,55 @@ class ColBERT_List_qa(nn.Module):
         Q = self.linear(Q)
         Q = torch.nn.functional.normalize(Q, p=2, dim=2)
         if decoder_labels is not None:
-            return Q, ar_loss
+            return Q, ar_losses
+        return Q
+
+    def query(self, input_ids, attention_mask, decoder_labels=None, **kwargs):
+        input_ids, attention_mask = input_ids.to(DEVICE), attention_mask.to(DEVICE)
+        ar_losses = None
+        Q = None
+        teacher_aug_Q = None
+        encoder_outputs = None
+        # print(print_generate, decoder_labels is not None)
+        if decoder_labels is not None:
+            if type(decoder_labels) != list:
+                decoder_labels = [decoder_labels]
+            ar_losses = []
+            for idx, decoder_label in enumerate(decoder_labels):
+                decoder_label[decoder_label == 0] = -100
+                if idx == 0:
+                    output = self.model(input_ids, attention_mask=attention_mask,
+                                        output_hidden_states=True, return_dict=True, labels=decoder_label)
+                    encoder_outputs = BaseModelOutput(
+                        last_hidden_state=output.encoder_last_hidden_state,
+                        hidden_states=output.encoder_hidden_states,
+                        attentions=output.encoder_attentions
+                    )
+                    Q = output.encoder_last_hidden_state
+                    if teacher_aug:
+                        teacher_aug_Q = output.decoder_hidden_states[-1][:, :query_aug_topk, ...]
+                        teacher_aug_Q_mask = torch.zeros((input_ids.size(0), query_aug_topk), dtype=torch.long).to(input_ids.device)
+                        aug_labels = decoder_label[:, :query_aug_topk]
+                        teacher_aug_Q_mask[(aug_labels != 0) & (aug_labels != -100)] = 1
+                        # Q = torch.cat([Q, teacher_aug_Q], dim=1)
+                        # q_word_mask = torch.cat([q_word_mask, teacher_aug_Q_mask], dim=1)
+                else:
+                    output = self.model(encoder_outputs=encoder_outputs, attention_mask=attention_mask, return_dict=True, labels=decoder_label)
+                ar_loss = output.loss
+                ar_losses.append(ar_loss)
+
+        else:
+            Q = self.encoder(input_ids, attention_mask=attention_mask, return_dict=True).last_hidden_state
+        # Q = Q.to(torch.float32)
+        # Q = self.model(input_ids, attention_mask=attention_mask, return_dict=True).last_hidden_state
+        # Q = self.linear_q(Q)
+        Q = self.linear(Q)
+        Q = torch.nn.functional.normalize(Q, p=2, dim=2)
+        if decoder_labels is not None:
+            if teacher_aug:
+                teacher_aug_Q = torch.nn.functional.normalize(self.linear(teacher_aug_Q), p=2, dim=2)
+                return Q, ar_losses, teacher_aug_Q, teacher_aug_Q_mask
+            return Q, ar_losses
         return Q
 
     def doc(self, input_ids, attention_mask, **kwargs):
@@ -235,26 +320,55 @@ class ColBERT_List_qa(nn.Module):
     def generate_aug_Q(self, input_ids):
         with torch.no_grad():
             # D = self.model.generate(input_ids=input_ids, output_hidden_states=True, return_dict_in_generate=True, min_length=10, num_beams=5, num_return_sequences=3)
-            outputs = self.model.generate(input_ids=input_ids, do_sample=False, output_hidden_states=True, return_dict_in_generate=True, min_length=query_aug_topk + 1)
+            # outputs = self.model.generate(input_ids=input_ids, do_sample=False, output_hidden_states=True, return_dict_in_generate=True, min_length=query_aug_topk + 1)
+            outputs = self.model.generate(input_ids=input_ids, do_sample=False, output_hidden_states=True, return_dict_in_generate=True)  # , no_repeat_ngram_size=4
             Q = outputs.decoder_hidden_states
-            # print(self.tokenizer.decode(input_ids[0], skip_special_tokens=False))
-            # print(len(self.tokenizer.decode(outputs.sequences[0], skip_special_tokens=False)))
-            # print((self.tokenizer.decode(outputs.sequences[0], skip_special_tokens=False)))
-            # input()
-            Q = torch.cat([_[-1] for _ in Q[1:query_aug_topk + 1]], dim=1)
+
+            if print_generate:
+                print(self.tokenizer.decode(input_ids[0], skip_special_tokens=True))
+                print(len(self.tokenizer.decode(outputs.sequences[0], skip_special_tokens=True)))
+                print((self.tokenizer.decode(outputs.sequences[0], skip_special_tokens=True)))
+                input()
+            Q = torch.cat([_[-1] for _ in Q[0:query_aug_topk]], dim=1)
             Q = self.linear(Q)
             Q = torch.nn.functional.normalize(Q, p=2, dim=2)
-            return Q
+            aug_Q = Q
+            if Q.size(1) < query_aug_topk:
+                aug_Q = torch.zeros((Q.size(0), query_aug_topk, Q.size(2)), dtype=Q.dtype).to(Q.device)
+                aug_Q[:, :Q.size(1), ...] = Q
+            aug_mask = torch.zeros((Q.size(0), Q.size(1) - 1), dtype=torch.long).to(input_ids.device)
+            aug_sequences = outputs.sequences[:, 1:Q.size(1)]  # shift left (for position i output contain information of i+1 token)
+            aug_mask[:, :Q.size(1) - 1][(aug_sequences != 0) & (aug_sequences != 1)] = 1
+
+            return aug_Q, aug_mask, aug_sequences
 
     def augment_query(self, input_ids, attention_mask, q_word_mask, decoder_labels=None):
         if decoder_labels is None:
             decoder_labels = self.get_dummy_labels(n=input_ids.size(0))
+
         Q, ar_loss = self.query(input_ids=input_ids, attention_mask=attention_mask, decoder_labels=decoder_labels)
-        aug_Q = self.generate_aug_Q(input_ids)
-        Q = torch.cat([Q, aug_Q], dim=1)
-        aug_mask = torch.ones((Q.size(0), query_aug_topk), dtype=torch.long).to(q_word_mask.device)
+        aug_Q, aug_mask, _ = self.generate_aug_Q(input_ids)
+
+        if not print_generate:
+            Q = torch.cat([Q, aug_Q], dim=1)
+
         q_word_mask = torch.cat([q_word_mask, aug_mask], dim=1)
         return Q, q_word_mask, ar_loss
+
+    def aug_query_and_reencode(self, input_ids, attention_mask, q_word_mask):
+        """
+        使用generate 扩充query，得到aug id， 然后结合原来的query重新输入encoder
+        :return:
+        """
+        aug_Q, aug_mask, aug_sequences = self.generate_aug_Q(input_ids)
+        input_ids, attention_mask = torch.cat([input_ids, aug_sequences], dim=1), torch.cat([attention_mask, aug_mask], dim=1)
+        q_word_mask = torch.cat([q_word_mask, aug_mask], dim=1)
+        Q = self.query(input_ids=input_ids, attention_mask=attention_mask)
+        # print(self.tokenizer.decode(input_ids[0], skip_special_tokens=True))
+        # print((self.tokenizer.decode(aug_sequences[0], skip_special_tokens=True)))
+        # print(attention_mask[0])
+        # input()
+        return Q, q_word_mask
 
     def reconstruct_forward(self, input_ids, hidden_states):
         # encoder_hidden_states = Q[:, 0:1, ...]
@@ -273,18 +387,43 @@ class ColBERT_List_qa(nn.Module):
         obj = train_dataset.tokenize_for_retriever(batch)
         ids, mask, q_word_mask = [_.to(DEVICE) for _ in obj[0]]
         answer_ids, answer_mask, answer_word_mask = [_.to(DEVICE) for _ in obj[1]]
+        title_ids, title_mask, title_word_mask = [_.to(DEVICE) for _ in obj[2]]
         # Q = model.colbert.query(ids, mask)
         # print(batch[0]['question'], '\n', batch[0]['A'], '\n', d_paras[0][:2])
         # input()
-        # Q = self.query(ids, q_word_mask)
-        Q, q_word_mask, ar_loss = self.augment_query(ids, mask, q_word_mask, answer_ids)
+        Q = self.query(ids, q_word_mask)
+        # Q, ar_losses = self.query(input_ids=ids, attention_mask=mask, decoder_labels=[answer_ids, title_ids])
+        # Q, ar_losses = self.query(input_ids=ids, attention_mask=mask, decoder_labels=title_ids)
+        q_answer_ids, q_answer_mask, q_answer_word_mask = \
+            torch.cat([ids, answer_ids, title_ids], dim=1), \
+            torch.cat([mask, answer_mask, title_mask], dim=1), \
+            torch.cat([q_word_mask, answer_word_mask, title_word_mask], dim=1)
+        Q_Answer = self.query(q_answer_ids, q_answer_mask)
+
+        # Q, ar_losses, teacher_aug_Q, teacher_aug_Q_mask = self.query(input_ids=ids, attention_mask=mask, decoder_labels=answer_ids)
+
+        # ar_loss = torch.tensor(0.0).requires_grad_(True).to(ids.device)
+        # Q, q_word_mask, ar_loss = self.augment_query(ids, mask, q_word_mask, answer_ids)
+        # Q, q_word_mask, ar_loss = self.augment_query(ids, mask, q_word_mask)
+
+        global teacher_aug
+
+        # Q, q_word_mask = torch.cat([Q, teacher_aug_Q], dim=1), torch.cat([q_word_mask, teacher_aug_Q_mask], dim=1)
+
         if is_testing_retrieval:
             # Q = self.colbert.query(ids, q_word_mask)
-            # Q, q_word_mask, ar_loss = self.augment_query(ids, mask, q_word_mask)
+            if print_generate:
+                print(self.tokenizer.decode(answer_ids[0], skip_special_tokens=True))
+            # teacher_aug = False
+            # Q, q_word_mask, ar_loss = self.augment_query(ids, mask, q_word_mask, answer_ids)
+            # Q, q_word_mask = self.aug_query_and_reencode(ids, mask, q_word_mask)
+            if print_generate:
+                return
+            # Q, q_word_mask = torch.cat([Q, teacher_aug_Q], dim=1), torch.cat([q_word_mask, teacher_aug_Q_mask], dim=1)
             retrieval_scores, d_paras = self.retriever_forward(Q, q_word_mask=q_word_mask, labels=None)
-            model_helper.merge_to_reader_input(batch, d_paras)
+            train_dataset.merge_to_reader_input(batch, d_paras)
             return
-
+        # return Q.contiguous(), q_word_mask.contiguous(), None, None, ar_loss
         if merge:
             with torch.no_grad():
                 Q = self.old_colbert.query(ids, q_word_mask)
@@ -306,7 +445,8 @@ class ColBERT_List_qa(nn.Module):
             query_reconstruction_loss = torch.tensor(0).to(DEVICE)
 
         # padded_negs = [model_helper.all_paras[_] for _ in np.random.randint(1, len(model_helper.all_paras), padded_p_num)] if not is_evaluating else []
-        padded_negs = [model_helper.all_paras[_] for _ in np.random.randint(1, len(model_helper.all_paras), pad_p_num if pad_p_num is not None else padded_p_num)]
+        # padded_negs = [model_helper.all_paras[_] for _ in np.random.randint(1, len(model_helper.all_paras), pad_p_num if pad_p_num is not None else padded_p_num)]
+        padded_negs = []
 
         D_ids, D_mask, D_word_mask = [_.to(DEVICE) for _ in
                                       train_dataset.tokenize_for_train_retriever(batch, padded_negs, eval_p_num=eval_p_num, is_evaluating=is_evaluating)]
@@ -325,7 +465,7 @@ class ColBERT_List_qa(nn.Module):
         else:
             doc_reconstruction_loss = torch.tensor(0).to(DEVICE)
 
-        Q1, q_word_mask, D, d_word_mask = [_.to(DEVICE) for _ in qd_mask_to_realinput(Q=Q, D=D, q_word_mask=q_word_mask, d_word_mask=D_word_mask)]
+        Q, q_word_mask, D, d_word_mask = [_.to(DEVICE) for _ in qd_mask_to_realinput(Q=Q, D=D, q_word_mask=q_word_mask, d_word_mask=D_word_mask)]
         # scores = self.colbert.score(Q1, D, q_mask=q_word_mask, d_mask=d_word_mask)
         # scores = (scores / q_word_mask.bool().sum(1)[:, None])
 
@@ -337,7 +477,36 @@ class ColBERT_List_qa(nn.Module):
         # return scores, D_scores, answer_reconstruction_loss
         # return scores, answer_reconstruction_loss
         # return scores, query_reconstruction_loss, doc_reconstruction_loss
-        return Q1.contiguous(), q_word_mask.contiguous(), D.contiguous(), d_word_mask.contiguous(), ar_loss
+
+        # ar_losses = sum(ar_losses)
+
+        # return Q1.contiguous(), q_word_mask.contiguous(), D.contiguous(), d_word_mask.contiguous(), ar_losses, teacher_aug_Q, teacher_aug_Q_mask
+        Q, q_word_mask, D, d_word_mask = Q.contiguous(), q_word_mask.contiguous(), D.contiguous(), d_word_mask.contiguous()
+        Q, q_word_mask, D, d_word_mask = collection_qd_masks([Q, q_word_mask, D, d_word_mask])
+        positive_idxes = torch.tensor([_ * p_num for _ in range(Q.size(0))])
+
+        scores = self.score(Q, D, q_mask=q_word_mask, d_mask=d_word_mask)
+        cur_retriever_loss = retriever_criterion(scores=scores / SCORE_TEMPERATURE,
+                                                 positive_idx_per_question=positive_idxes,
+                                                 hard_negative_idx_per_question=None)
+        if teacher_aug:
+            teacher_aug_Q, teacher_aug_Q_mask = collection_qd_masks([teacher_aug_Q, teacher_aug_Q_mask])
+            teacher_aug_scores = self.score(teacher_aug_Q, D, q_mask=teacher_aug_Q_mask, d_mask=d_word_mask)
+            cur_teacher_aug_retriever_loss = retriever_criterion(scores=teacher_aug_scores / SCORE_TEMPERATURE,
+                                                                 positive_idx_per_question=positive_idxes,
+                                                                 hard_negative_idx_per_question=None)
+
+        if kl_answer_re_loss:
+            Q_Answer, q_answer_word_mask = Q_Answer.contiguous(), q_answer_word_mask.contiguous()
+            Q_Answer, q_answer_word_mask = collection_qd_masks([Q_Answer, q_answer_word_mask])
+
+            q_answer_scores = self.score(Q_Answer, D, q_mask=q_answer_word_mask, d_mask=d_word_mask)
+            cur_q_answer_retriever_loss = retriever_criterion(scores=q_answer_scores / SCORE_TEMPERATURE,
+                                                              positive_idx_per_question=positive_idxes,
+                                                              hard_negative_idx_per_question=None)
+            q_answer_kl_loss = kl_loss(y_pred=scores / kl_temperature, y_true=q_answer_scores / kl_temperature)
+
+        return cur_retriever_loss, cur_q_answer_retriever_loss, q_answer_kl_loss
         # return scores
         # return scores, D_scores
 

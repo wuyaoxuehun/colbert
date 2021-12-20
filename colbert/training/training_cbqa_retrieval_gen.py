@@ -19,7 +19,8 @@ from colbert.training.training_utils import SequentialDistributedSampler, moving
     mix_qd, pre_batch_enable, get_t5_optimizer
 from colbert.training.training_utils import scheduler_neg
 from colbert.utils.amp import MixedPrecisionManager
-from conf import reader_config, colbert_config, model_config, p_num, padded_p_num, index_config, save_model_name, pos_num, neg_num, SCORE_TEMPERATURE, opt_num, pretrain, lr, eval_p_num
+from conf import reader_config, colbert_config, model_config, p_num, padded_p_num, index_config, pos_num, neg_num, SCORE_TEMPERATURE, opt_num, pretrain, lr, eval_p_num, load_trained, \
+    calc_re_loss, save_every_eval, teacher_aug
 from ir_score_silver import eval_metric_for_data, eval_metric_for_data_noopt
 from file_utils import dump_json
 from tests.pyserini_search import evaluate_retrieval
@@ -50,14 +51,14 @@ def cleanup():
     torch.distributed.destroy_process_group()
 
 
-retriever_criterion = BiEncoderNllLoss
-
-
 def train(args):
     setseed(12345, args.rank)
 
     colbert_config['init'] = True
     colbert_qa = ColBERT_List_qa(config=model_config, colbert_config=colbert_config, reader_config=reader_config, load_old=False)
+    if load_trained:
+        colbert_qa.load(load_trained)
+
     colbert_qa.to(DEVICE)
     if args.distributed:
         colbert_qa = DDP(colbert_qa, device_ids=[args.rank], find_unused_parameters=True)
@@ -159,8 +160,11 @@ def train(args):
         ar_loss = MAverage()
         qr_loss = MAverage()
         dr_loss = MAverage()
+        teacher_aug_re_loss = MAverage()
         ans_sim_loss = MAverage()
         re_ans_loss = MAverage()
+        q_answer_re_loss = MAverage()
+        q_answer_kl_loss = MAverage()
 
         reader_loss_total = 0
         pos_weight, hard_neg_weight, neg_weight = scheduler_neg(epoch, args.epoch)
@@ -197,12 +201,16 @@ def train(args):
             #         D0.append(D1)
             #         d_word_mask0.append(d_word_mask1)
             model.train()
+            cur_retriever_loss, cur_q_answer_retriever_loss, cur_q_answer_kl_loss, cur_ar_loss, cur_teacher_aug_retriever_loss \
+                = [torch.tensor(0.0).cuda() for _ in range(5)]
             with amp.context():
                 # scores = \
                 # scores, query_reconstruction_loss, doc_reconstruction_loss = \
                 # scores = \
                 # torch.autograd.set_detect_anomaly(True)
-                Q, q_word_mask, D, d_word_mask, cur_ar_loss = \
+                # Q, q_word_mask, D, d_word_mask, cur_ar_loss = \
+                # cur_retriever_loss, cur_ar_loss, cur_teacher_aug_retriever_loss = \
+                cur_retriever_loss, cur_q_answer_retriever_loss, cur_q_answer_kl_loss = \
                     model(batch, train_dataset, merge=False, doc_enc_training=True, pad_p_num=padded_p_num)
                 # scores, D_scores = model(batch, train_dataset, merge=False, doc_enc_training=True, pad_p_num=padded_p_num)
 
@@ -223,9 +231,6 @@ def train(args):
                 # Q, q_word_mask, D, d_word_mask = [torch.cat(_, dim=0) for _ in [Q0, q_word_mask0, D0, d_word_mask0]]
 
                 # tQ, tq_word_mask, tD, td_word_mask = collection_qd_masks(Q, q_word_mask, D, d_word_mask, args.rank)
-                if args.distributed:
-                    Q, q_word_mask, D, d_word_mask = collection_qd_masks(Q, q_word_mask, D, d_word_mask, args.rank)
-
                 # Q, q_word_mask, D, d_word_mask, aug_mask, positive_idxes = mix_qd(Q, q_word_mask, D, d_word_mask, aug_num=Q.size(0) // 4, p_num=2, alpha=None)
                 # Q, q_word_mask, D, d_word_mask = tQ.clone(), tq_word_mask.clone(), tD.clone(), td_word_mask.clone()
                 # if len(qd_queue) != 0 and pre_batch_enable(epoch, args.epoch):
@@ -234,23 +239,34 @@ def train(args):
                 #         q_word_mask = torch.cat([q_word_mask, q_word_mask1], dim=0)
                 #         D = torch.cat([D, d1], dim=0)
                 #         d_word_mask = torch.cat([d_word_mask, d_word_mask1], dim=0)
-                cur_retriever_loss = torch.tensor(0.0).cuda()
-                if False:
-                    if args.distributed:
-                        scores = model.module.score(Q, D, q_mask=q_word_mask, d_mask=d_word_mask)
-                    else:
-                        scores = model.score(Q, D, q_mask=q_word_mask, d_mask=d_word_mask)
+                # cur_retriever_loss = torch.tensor(0.0).cuda()
+                # if calc_re_loss:
+                #     if args.distributed:
+                #         Q, q_word_mask, D, d_word_mask, teacher_aug_Q, teacher_aug_Q_mask = \
+                #             collection_qd_masks([Q, q_word_mask, D, d_word_mask], args.rank)
+                #         scores = model.module.score(Q, D, q_mask=q_word_mask, d_mask=d_word_mask)
+                #         if teacher_aug:
+                #             teacher_aug_scores = model.module.score(teacher_aug_Q, D, q_mask=teacher_aug_Q_mask, d_mask=d_word_mask)
+                #     else:
+                #         scores = model.score(Q, D, q_mask=q_word_mask, d_mask=d_word_mask)
+                #         if teacher_aug:
+                #             teacher_aug_scores = model.module.score(teacher_aug_Q, D, q_mask=teacher_aug_Q_mask, d_mask=d_word_mask)
+                # scores[aug_mask.bool()] = -1e4
 
-                    # scores[aug_mask.bool()] = -1e4
+                ###########scores = (scores / q_word_mask.bool().sum(1)[:, None])################
+                # positive_idxes = torch.tensor([_ * p_num for _ in range(Q.size(0))])
+                # retriever_loss = retriever_criterion(y_pred=scores, y_true=retriever_labels[:scores.size(0), :scores.size(1)])
+                # cur_retriever_loss = retriever_criterion(y_pred=scores / SCORE_TEMPERATURE, y_true=retriever_labels[:scores.size(0), :scores.size(1)], neg_weight_mask=neg_weight_mask)
+                # cur_retriever_loss = retriever_criterion(y_pred=scores / SCORE_TEMPERATURE, y_true=retriever_labels[:scores.size(0), :], neg_weight_mask=neg_weight_mask)
+                # cur_retriever_loss = retriever_criterion(scores=scores / SCORE_TEMPERATURE,
+                #                                          positive_idx_per_question=positive_idxes,
+                #                                          hard_negative_idx_per_question=None)
+                #
+                # if teacher_aug:
+                #     cur_teacher_aug_retriever_loss = retriever_criterion(scores=teacher_aug_scores / SCORE_TEMPERATURE,
+                #                                                          positive_idx_per_question=positive_idxes,
+                #                                                          hard_negative_idx_per_question=None)
 
-                    # scores = (scores / q_word_mask.bool().sum(1)[:, None])
-                    positive_idxes = torch.tensor([_ * p_num for _ in range(Q.size(0))])
-                    # retriever_loss = retriever_criterion(y_pred=scores, y_true=retriever_labels[:scores.size(0), :scores.size(1)])
-                    # cur_retriever_loss = retriever_criterion(y_pred=scores / SCORE_TEMPERATURE, y_true=retriever_labels[:scores.size(0), :scores.size(1)], neg_weight_mask=neg_weight_mask)
-                    # cur_retriever_loss = retriever_criterion(y_pred=scores / SCORE_TEMPERATURE, y_true=retriever_labels[:scores.size(0), :], neg_weight_mask=neg_weight_mask)
-                    cur_retriever_loss = retriever_criterion(scores=scores / SCORE_TEMPERATURE,
-                                                             positive_idx_per_question=positive_idxes,
-                                                             hard_negative_idx_per_question=None)
                 # cur_retriever_loss = retriever_criterion(y_pred=scores / Temperature, y_true=retriever_labels[:scores.size(0), :scores.size(1)] / Temperature)
                 # word_num = word_mask.sum(-1).unsqueeze(-1)
                 # scores = scores / word_num.cuda()
@@ -258,7 +274,7 @@ def train(args):
                 # input()
                 if (step) % 16 == 111:
                     idx = 0
-                    print(scores[idx])
+                    # print(scores[idx])
                     print(retriever_labels[idx])
                     idx = idx // 4
                     print(batch[idx]['background'], '\n', batch[idx]['question'], '\n', batch[idx]['A'], '\n', '\n'.join([_['paragraph'] for _ in batch[idx]['paragraph_a'][:2]]))
@@ -278,8 +294,15 @@ def train(args):
                 # total_loss = coef * cur_retriever_loss + (1 - coef) * query_reconstruction_loss + (1 - coef) * 0.5 * doc_reconstruction_loss
                 # total_loss = coef * cur_retriever_loss + (1 - coef) * answer_reconstruction_loss
                 # total_loss = 1 * cur_retriever_loss + (1 - 1) * answer_reconstruction_loss
-                # total_loss = cur_retriever_loss * coef + cur_ar_loss
-                total_loss = cur_ar_loss
+                if calc_re_loss:
+                    if teacher_aug:
+                        total_loss = cur_ar_loss + cur_retriever_loss + 0 * cur_teacher_aug_retriever_loss  # * int(epoch > 15)
+                    else:
+                        # total_loss = cur_ar_loss + cur_retriever_loss
+                        total_loss = cur_retriever_loss * 2 + cur_q_answer_retriever_loss * 2 + cur_q_answer_kl_loss
+                else:
+                    total_loss = cur_ar_loss
+                # total_loss = cur_retriever_loss
                 # total_loss = cur_retriever_loss
                 # total_loss = cur_retriever_loss
                 # total_loss = cur_retriever_loss + answer_reconstruction_loss
@@ -296,13 +319,21 @@ def train(args):
             # if pre_batch_enable(epoch, args.epoch):
             #     qd_queue.append((_.detach().requires_grad_(False) for _ in [tQ, tq_word_mask, tD, td_word_mask]))
             if args.distributed:
-                cur_retriever_loss = distributed_concat(tensor=cur_retriever_loss.unsqueeze(0), num_total_examples=None).mean()
-                if not torch.isfinite(cur_retriever_loss):
-                    logger.warning('nan loss')
-                total_loss = distributed_concat(tensor=total_loss.unsqueeze(0), num_total_examples=None).mean()
+                # if not torch.isfinite(cur_retriever_loss):
+                #     logger.warning('nan loss')
+                cur_retriever_loss, cur_q_answer_retriever_loss, cur_q_answer_kl_loss, total_loss = [
+                    distributed_concat(tensor=_.unsqueeze(0), num_total_examples=None).mean()
+                    for _ in
+                    [cur_retriever_loss, cur_q_answer_retriever_loss, cur_q_answer_kl_loss, total_loss]
+                ]
+
             re_loss.add(cur_retriever_loss.item() if torch.isfinite(cur_retriever_loss) else 0)
             tr_loss.add(total_loss.item())
-            ar_loss.add(cur_ar_loss.item())
+            q_answer_kl_loss.add(cur_q_answer_kl_loss.item())
+            q_answer_re_loss.add(cur_q_answer_retriever_loss.item())
+
+            # ar_loss.add(cur_ar_loss.item())
+            # teacher_aug_re_loss.add(cur_teacher_aug_retriever_loss.item())
             # ar_loss.add(distributed_concat(tensor=answer_reconstruction_loss.unsqueeze(0), num_total_examples=1).mean().item())
             # avg_qr_loss = qr_loss.send(distributed_concat(tensor=query_reconstruction_loss.unsqueeze(0), num_total_examples=1).mean().item())
             # avg_dr_loss = dr_loss.send(distributed_concat(tensor=doc_reconstruction_loss.unsqueeze(0), num_total_examples=1).mean().item())
@@ -338,13 +369,13 @@ def train(args):
                 # eval_loss = 0
                 if args.rank == 0:
                     # model.save(save_dir=args.output_dir)
-                    if False or eval_loss < best_metrics:
+                    if save_every_eval or eval_loss < best_metrics:
                         # best_metrics = results['accuracy']
                         best_metrics = min(eval_loss, best_metrics)
                         if args.distributed:
-                            model.module.save(os.path.join(args.output_dir, save_model_name))
+                            model.module.save(args.output_dir)
                         else:
-                            model.save(os.path.join(args.output_dir, save_model_name))
+                            model.save(args.output_dir)
                         # save_model(args, model, tokenizer)
                         # best_results = {'epoch': epoch, 'global_step': global_step}
                         # best_results.update(results)
@@ -356,6 +387,9 @@ def train(args):
                     # logger.info("re_ans_loss = %s", avg_re_ans_loss)
                     logger.info("tr_loss = %s", tr_loss.get_average())
                     logger.info("ar_loss = %s", ar_loss.get_average())
+                    logger.info("teacher_aug_re_loss = %s", teacher_aug_re_loss.get_average())
+                    logger.info("q_answer_re_loss = %s", q_answer_re_loss.get_average())
+                    logger.info("q_answer_kl_loss = %s", q_answer_kl_loss.get_average())
                     logger.info("qr_loss = %s", qr_loss.get_average())
                     logger.info("dr_loss = %s", dr_loss.get_average())
                     # logger.info("ans_sim_loss = %s", avg_ans_sim_loss)
@@ -387,7 +421,8 @@ def train(args):
 def eval_retrieval(args, colbert_qa=None):
     # setseed(12345 + args.rank)
     if colbert_qa is None:
-        colbert_config['checkpoint'] = f"output/webq/{save_model_name}/pytorch.bin"
+        # colbert_config['checkpoint'] = f"output/webq/{save_model_name}/pytorch.bin"
+        exit()
         colbert_config['init'] = True
         colbert_qa = ColBERT_List_qa(config=model_config, colbert_config=colbert_config, reader_config=reader_config, load_old=False)
         colbert_qa.load(colbert_config['checkpoint'])
@@ -440,6 +475,9 @@ def eval_retrieval(args, colbert_qa=None):
     # re_loss = MAverage()
     re_loss = torch.tensor(0.0).cuda()
     ar_loss = torch.tensor(0.0).cuda()
+    teacher_aug_re_loss = torch.tensor(0.0).cuda()
+    q_answer_re_loss = torch.tensor(0.0).cuda()
+    q_answer_kl_loss = torch.tensor(0.0).cuda()
     # qr_loss = MAverage()
     # dr_loss = MAverage()
     for step, batch in enumerate(epoch_iterator):
@@ -450,12 +488,13 @@ def eval_retrieval(args, colbert_qa=None):
             # Q = model.colbert.query(ids, mask)
             # retrieval_scores, d_paras = model.retriever_forward(Q, q_word_mask=word_mask, labels=None)
             # model_helper.merge_to_reader_input(batch, d_paras)
+            cur_retriever_loss = torch.tensor(0.0).cuda()
             with amp.context():
                 # scores, D_scores, answer_reconstruction_loss, query_reconstruction_loss = model(batch, train_dataset, is_evaluating=True, merge=False, doc_enc_training=True, eval_p_num=eval_p_num, pad_p_num=eval_pad_p_num)
                 # scores, answer_reconstruction_loss = model(batch, train_dataset, is_evaluating=True, merge=False, doc_enc_training=True, eval_p_num=eval_p_num, pad_p_num=eval_pad_p_num)
                 # scores, query_reconstruction_loss, doc_reconstruction_loss\
                 # scores \
-                Q, q_word_mask, D, d_word_mask, cur_ar_loss = \
+                cur_retriever_loss, cur_q_answer_retriever_loss, cur_q_answer_kl_loss = \
                     model(batch, train_dataset, is_evaluating=True, merge=False, doc_enc_training=True, eval_p_num=eval_p_num, pad_p_num=0)
                 # scores = model(batch, train_dataset, is_evaluating=True, merge=False, doc_enc_training=True, eval_p_num=eval_p_num, pad_p_num=eval_pad_p_num)
                 # pass
@@ -476,26 +515,24 @@ def eval_retrieval(args, colbert_qa=None):
                 #         retriever_labels[i, -padded_p_num:] = D_scores[i, -padded_p_num:] / Temperature
                 # if args.rank > 0:
                 #     torch.distributed.barrier()
-                assert args.distributed
-                if args.distributed:
-                    Q, q_word_mask, D, d_word_mask = collection_qd_masks(Q, q_word_mask, D, d_word_mask, args.rank)
+                # assert args.distributed
                 # scores = model.module.colbert.score(all_Q, all_D, q_mask=all_q_word_mask, d_mask=all_d_word_mask)
-                cur_retriever_loss = torch.tensor(0.0).cuda()
-                if False:
-                    if args.distributed:
-                        scores = model.module.score(Q, D, q_mask=q_word_mask, d_mask=d_word_mask)
-                    else:
-                        scores = model.score(Q, D, q_mask=q_word_mask, d_mask=d_word_mask)
-
-                    positive_idxes = torch.tensor([_ * eval_p_num for _ in range(Q.size(0))])
-                    cur_retriever_loss = retriever_criterion(scores=scores / SCORE_TEMPERATURE,
-                                                             positive_idx_per_question=positive_idxes,
-                                                             hard_negative_idx_per_question=None)
+                # if calc_re_loss:
+                #     if args.distributed:
+                #         Q, q_word_mask, D, d_word_mask = collection_qd_masks([Q, q_word_mask, D, d_word_mask, args.rank])
+                #         scores = model.module.score(Q, D, q_mask=q_word_mask, d_mask=d_word_mask)
+                #     else:
+                #         scores = model.score(Q, D, q_mask=q_word_mask, d_mask=d_word_mask)
+                #
+                #     positive_idxes = torch.tensor([_ * eval_p_num for _ in range(Q.size(0))])
+                #     cur_retriever_loss = retriever_criterion(scores=scores / SCORE_TEMPERATURE,
+                #                                              positive_idx_per_question=positive_idxes,
+                #                                              hard_negative_idx_per_question=None)
                 # print(retriever_labels)
                 # input()
                 if (step) % 25 == 111:
                     idx = 0
-                    print(scores)
+                    # print(scores)
                     # print(retriever_labels)
                     idx = idx // 4
                     print(batch[idx]['background'], '\n', batch[idx]['question'], '\n', batch[idx]['A'], '\n', '\n'.join([_['paragraph'] for _ in batch[idx]['paragraph_a'][:2]]))
@@ -507,7 +544,11 @@ def eval_retrieval(args, colbert_qa=None):
                 # retriever_loss = retriever_criterion(y_pred=scores, y_true=retriever_labels[:scores.size(0), :scores.size(1)])
             # eval_loss += retriever_loss
             re_loss += cur_retriever_loss
-            ar_loss += cur_ar_loss
+            q_answer_re_loss += cur_q_answer_retriever_loss
+            q_answer_kl_loss += cur_q_answer_kl_loss
+
+            # ar_loss += cur_ar_loss
+            # teacher_aug_re_loss += cur_teacher_aug_retriever_loss
             # ar_loss.add(cur_ar_loss.item())
             # qr_loss.add(distributed_concat(tensor=query_reconstruction_loss.unsqueeze(0), num_total_examples=1).mean().item())
             # dr_loss.add(distributed_concat(tensor=doc_reconstruction_loss.unsqueeze(0), num_total_examples=1).mean().item())
@@ -537,10 +578,17 @@ def eval_retrieval(args, colbert_qa=None):
                                        avg_total='%.4f' % (tr_loss / (step + 1)), )
     # torch.distributed.barrier()
     if args.distributed:
-        re_loss = distributed_concat(tensor=re_loss.unsqueeze(0), num_total_examples=None).mean()
-        ar_loss = distributed_concat(tensor=ar_loss.unsqueeze(0), num_total_examples=None).mean()
+        re_loss, q_answer_re_loss, q_answer_kl_loss = [
+            distributed_concat(tensor=_.unsqueeze(0), num_total_examples=None).mean()
+            for _ in
+            [re_loss, q_answer_re_loss, q_answer_kl_loss]
+        ]
+
     eval_losses = {"eval_re_loss": re_loss.item(),
                    "eval_ar_loss": ar_loss.item(),
+                   "eval_teacher_aug_re_loss": teacher_aug_re_loss.item(),
+                   "q_answer_kl_loss": q_answer_kl_loss.item(),
+
                    # "eval_qr_loss": qr_loss.get_average(),
                    # "eval_dr_loss": dr_loss.get_average(),
                    # "eval_tr_loss": re_loss.get_average() + ar_loss.get_average()}
@@ -571,7 +619,7 @@ def eval_retrieval_for_model(args):
     amp = MixedPrecisionManager(args.amp)
 
     tokenizer = CostomTokenizer.from_pretrained(pretrain)
-    train_dataset = CBQADataset('webq-train-0', tokenizer=tokenizer, doc_maxlen=colbert_config['doc_maxlen'],
+    train_dataset = CBQADataset('webq-test-0', tokenizer=tokenizer, doc_maxlen=colbert_config['doc_maxlen'],
                                 query_maxlen=colbert_config['query_maxlen'], reader_max_seq_length=reader_config['max_seq_length'])
     # t_total = len(train_dataset) // args.gradient_accumulation_steps * args.epoch
     train_sampler = SequentialSampler(train_dataset)
@@ -587,7 +635,7 @@ def eval_retrieval_for_model(args):
     # index_config["n_probe"] = 320
     # model_helper = load_model_helper(args.rank)
     # model_helper = load_model_helper(0)
-    load_model_helper()
+    model_helper = load_model_helper()
     # retriever_criterion = listnet_loss
 
     # loss_fun = AutomaticWeightedLoss(num=2)
@@ -681,11 +729,13 @@ def eval_retrieval_for_model(args):
     # dump_json(output_data, file="data/bm25/result.json")
     # p_num, padded_p_num = t_pnum, tpad_pnum
     # return eval_loss / eval_steps
+    model_helper.close()
 
 
 def evaluate(args, model, mode='dev'):
     results = {}
-    tokenizer = CostomTokenizer.from_pretrained(base_config.pretrain)
+    exit()
+    tokenizer = CostomTokenizer.from_pretrained(pretrain)
     dev_dataset = CBQADataset(f'rougelr-{mode}-0', tokenizer=tokenizer, doc_maxlen=colbert_config['doc_maxlen'],
                               query_maxlen=colbert_config['query_maxlen'], reader_max_seq_length=reader_config['max_seq_length'])
     # colbert_qa = ColBERT_List_qa(config=model_config, colbert_config=colbert_config, reader_config=reader_config)
