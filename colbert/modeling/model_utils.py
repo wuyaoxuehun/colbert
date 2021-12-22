@@ -25,3 +25,10 @@ def collect_p_bqo(seq_output: torch.tensor, segment_lens):
 
     p, p_mask, bqo, bqo_mask = p[:, :p_len_max, ...], p_mask[:, :p_len_max, ...], bqo[:, :bqo_len_max, ...], bqo_mask[:, :bqo_len_max, ...]
     return p, p_mask, bqo, bqo_mask
+
+
+# Batched index_select
+def batched_index_select(t, dim, inds):
+    dummy = inds.unsqueeze(2).expand(inds.size(0), inds.size(1), t.size(2))
+    out = t.gather(dim, dummy)  # b x e x f
+    return out

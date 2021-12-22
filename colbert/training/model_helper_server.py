@@ -33,8 +33,9 @@ class ModelHelper:
         self.retrieve = self.retriever.search
 
     def retrieve_for_encoded_queries(self, batches, q_word_mask=None, retrieve_topk=10):
-        batches = torch.clone(batches).cpu().detach().to(dtype=torch.float16)
-        q_word_mask = torch.clone(q_word_mask).cpu().detach()
+        # batches = torch.clone(batches).cpu().detach().to(dtype=torch.float16)
+        batches = batches.cpu().detach().to(dtype=torch.float16)
+        q_word_mask = q_word_mask.cpu().detach()
         batches = [qd_mask_to_realinput(Q=q, q_word_mask=qw_mask, keep_dim=False) for q, qw_mask in zip(batches, q_word_mask)]
 
         batch_pids = []
@@ -44,7 +45,7 @@ class ModelHelper:
                 batch_pids += self.retrieve(query=Q, topk_doc=retrieve_topk)
             else:
                 for i, (q, q_word_mask) in enumerate(batches):
-                    # print(q.size(), q_word_mask.size())
+                    print(q.size(), q_word_mask.size())
                     # input()
                     pids = self.retrieve(query=(q, q_word_mask), topk_doc=retrieve_topk)
                     batch_pids.append(pids)
@@ -71,17 +72,21 @@ def start_server(index_config):
         print("receiving connection --- --- ")
         conn = listener.accept()
         print('connection accepted from', listener.last_accepted)
-        try:
-            while True:
-                msg = conn.recv()
-                if msg == 'close':
-                    conn.close()
-                    break
-                batches, q_word_mask, retrieve_topk = msg
-                batch_pids = helper.retrieve_for_encoded_queries(batches, q_word_mask, retrieve_topk)[-1]
-                conn.send(batch_pids)
-        except Exception as e:
-            print(e)
+        # try:
+        while True:
+            msg = conn.recv()
+            if msg == 'close':
+                conn.close()
+                break
+            batches, q_word_mask, retrieve_topk, *others = msg
+            if len(others) > 0:
+                faiss_depth, nprobe = others
+                helper.retriever.set_faiss_depth_nprobe(faiss_depth, nprobe)
+
+            batch_pids = helper.retrieve_for_encoded_queries(batches, q_word_mask, retrieve_topk)[-1]
+            conn.send(batch_pids)
+        # except Exception as e:
+        #     print(e)
 
         listener.close()
         # port_start += 1

@@ -294,14 +294,15 @@ def train(args):
                 # total_loss = coef * cur_retriever_loss + (1 - coef) * query_reconstruction_loss + (1 - coef) * 0.5 * doc_reconstruction_loss
                 # total_loss = coef * cur_retriever_loss + (1 - coef) * answer_reconstruction_loss
                 # total_loss = 1 * cur_retriever_loss + (1 - 1) * answer_reconstruction_loss
-                if calc_re_loss:
-                    if teacher_aug:
-                        total_loss = cur_ar_loss + cur_retriever_loss + 0 * cur_teacher_aug_retriever_loss  # * int(epoch > 15)
-                    else:
-                        # total_loss = cur_ar_loss + cur_retriever_loss
-                        total_loss = cur_retriever_loss * 2 + cur_q_answer_retriever_loss * 2 + cur_q_answer_kl_loss
-                else:
-                    total_loss = cur_ar_loss
+                # if calc_re_loss:
+                #     if teacher_aug:
+                #         total_loss = cur_ar_loss + cur_retriever_loss + 0 * cur_teacher_aug_retriever_loss  # * int(epoch > 15)
+                #     else:
+                #         # total_loss = cur_ar_loss + cur_retriever_loss
+                #         total_loss = cur_retriever_loss * 2 + cur_q_answer_retriever_loss * 2 + cur_q_answer_kl_loss
+                # else:
+                #     total_loss = cur_ar_loss
+                total_loss = cur_retriever_loss
                 # total_loss = cur_retriever_loss
                 # total_loss = cur_retriever_loss
                 # total_loss = cur_retriever_loss
@@ -445,7 +446,8 @@ def eval_retrieval(args, colbert_qa=None):
     train_sampler = DistributedSampler(train_dataset) if args.distributed else SequentialSampler(train_dataset)
     train_dataloader = DataLoader(dataset=train_dataset,
                                   sampler=train_sampler, pin_memory=True, drop_last=False,
-                                  batch_size=args.batch_size * 2, collate_fn=collate_fun())
+                                  batch_size=args.batch_size, collate_fn=collate_fun())
+                                  # batch_size=args.batch_size * 2, collate_fn=collate_fun())
     model = colbert_qa
 
     model_helper = load_model_helper(args.rank)
@@ -488,7 +490,7 @@ def eval_retrieval(args, colbert_qa=None):
             # Q = model.colbert.query(ids, mask)
             # retrieval_scores, d_paras = model.retriever_forward(Q, q_word_mask=word_mask, labels=None)
             # model_helper.merge_to_reader_input(batch, d_paras)
-            cur_retriever_loss = torch.tensor(0.0).cuda()
+            cur_retriever_loss, cur_q_answer_retriever_loss, cur_q_answer_kl_loss = [torch.tensor(0.0).cuda() for _ in range(3)]
             with amp.context():
                 # scores, D_scores, answer_reconstruction_loss, query_reconstruction_loss = model(batch, train_dataset, is_evaluating=True, merge=False, doc_enc_training=True, eval_p_num=eval_p_num, pad_p_num=eval_pad_p_num)
                 # scores, answer_reconstruction_loss = model(batch, train_dataset, is_evaluating=True, merge=False, doc_enc_training=True, eval_p_num=eval_p_num, pad_p_num=eval_pad_p_num)
@@ -581,7 +583,7 @@ def eval_retrieval(args, colbert_qa=None):
         re_loss, q_answer_re_loss, q_answer_kl_loss = [
             distributed_concat(tensor=_.unsqueeze(0), num_total_examples=None).mean()
             for _ in
-            [re_loss, q_answer_re_loss, q_answer_kl_loss]
+            [re_loss / len(train_dataloader), q_answer_re_loss / len(train_dataloader), q_answer_kl_loss / len(train_dataloader)]
         ]
 
     eval_losses = {"eval_re_loss": re_loss.item(),

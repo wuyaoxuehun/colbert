@@ -3,6 +3,7 @@ import torch
 from itertools import accumulate
 from colbert.parameters import DEVICE
 from colbert.utils.utils import print_message
+from colbert.modeling.colbert_list_qa_gen import *
 
 BSIZE = 1 << 14
 
@@ -164,7 +165,12 @@ class IndexRanker():
 
             scores = (D @ group_Q) * mask.unsqueeze(-1)
             scores = scores.max(1).values.sum(-1).cpu()
-
+            # print(scores.size())
+            # print(group_Q.size(), D.size(), torch.ones(group_Q.size()[:2]).size(), mask.size())
+            # input()
+            scores = ColBERT_List_qa.score(Q=group_Q.permute(0, 2, 1), D=D, q_mask=torch.ones((1, group_Q.size(2))).cuda(), d_mask=mask)[0].cpu()
+            # print(scores.size())
+            # input()
             output_pids.append(group_pids)
             output_scores.append(scores)
             output_permutation.append(one_to_n[locator])

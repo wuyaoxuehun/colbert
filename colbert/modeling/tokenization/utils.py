@@ -145,7 +145,7 @@ class CostomTokenizer(encoder_tokenizer):
         return input_ids, attention_mask, word_pos0_mask, cur_segments
 
     @cache_decorator(cache_fun=cache_function)
-    def tokenize_multiple_parts(self, parts=None, max_seq_length=None, weights=None, generation_ending_token_idx=None, keep=(),
+    def tokenize_multiple_parts___(self, parts=None, max_seq_length=None, weights=None, generation_ending_token_idx=None, keep=(),
                                 marker_token=None, add_special_tokens=True, prefix=None):
         assert len(weights) == len(parts)
         if weights is None:
@@ -158,6 +158,34 @@ class CostomTokenizer(encoder_tokenizer):
         #     self.pad_token = self.tokenizer.pad_token  # to avoid an error
 
         nparts = len(parts)
+        if add_special_tokens:
+            input_sequence = CLS + marker_token + SEP.join(parts) + SEP
+        else:
+            input_sequence = (prefix if prefix is not None else "") + answer_SEP.join(parts) + SEP
+        # convert_tokens_to_ids, batch_encode_plus
+        encoding = self.encode_plus(input_sequence,
+                                    padding='max_length',
+                                    max_length=max_seq_length,
+                                    truncation=True,
+                                    add_special_tokens=False)
+        input_ids = encoding['input_ids']
+        attention_mask = encoding['attention_mask']
+        # print(sum(attention_mask))
+        # print(input_sequence)
+        # print(input_ids)
+        # print(attention_mask)
+        # input()
+
+        # word_pos0_mask = [1] + word_pos0_mask[:(max_seq_length - padding_length)] + [0] + [0] * padding_length
+        word_pos0_mask = attention_mask
+        cur_segments = [' '] * len(input_ids)
+        assert len(input_ids) == len(attention_mask) == len(word_pos0_mask) == max_seq_length, \
+            (len(input_ids), len(attention_mask), len(word_pos0_mask))
+        return input_ids, attention_mask, word_pos0_mask, cur_segments
+
+    def tokenize_multiple_parts(self, parts=None, max_seq_length=None, weights=None, generation_ending_token_idx=None, keep=(),
+                                marker_token=None, add_special_tokens=True, prefix=None):
+        assert len(weights) == len(parts)
         if add_special_tokens:
             input_sequence = CLS + marker_token + SEP.join(parts) + SEP
         else:
@@ -232,7 +260,7 @@ class CostomTokenizer(encoder_tokenizer):
             input_ids, attention_mask, word_pos0_mask, cur_segments = \
                 self.tokenize_multiple_parts(parts=enum, max_seq_length=answer_max_seq_length, weights=[1] * len(enum),
                                              generation_ending_token_idx=None, keep=[], marker_token=Q_marker_token,
-                                             add_special_tokens=False, prefix=title_prefix)
+                                             add_special_tokens=False, prefix=None) # prefix=title_prefix
 
             title_input_ids_all.append(input_ids)
             title_attention_mask_all.append(attention_mask)

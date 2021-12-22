@@ -183,6 +183,12 @@ class ColbertRetriever(DenseFaissRetriever):
         self.retrieve = partial(self.faiss_index.retrieve, self.index_config['faiss_depth'])
         self.index = IndexPart(index_config['index_path'], dim=index_config['dim'], part_range=index_config['part_range'], verbose=True)
 
+    def set_faiss_depth_nprobe(self, faiss_depth=None, nprobe=None):
+        if faiss_depth is not None:
+            self.retrieve = partial(self.faiss_index.retrieve, faiss_depth)
+        if nprobe is not None:
+            self.faiss_index.faiss_index.nprobe = nprobe
+
     def get_colbert_index(self):
         parts, parts_paths, samples_paths = get_parts(self.index_path)
         return prepare_faiss_index(parts_paths, self.partitions, self.sample)
@@ -200,6 +206,7 @@ class ColbertRetriever(DenseFaissRetriever):
         Q, q_word_mask = query
         assert len(Q.size()) == 2
         pids = self.retrieve(Q.unsqueeze(0), verbose=False)[0]
+        input(len(pids))
         weighted_q = Q * q_word_mask[:, None]
         Q = weighted_q.unsqueeze(0)
         Q = Q.permute(0, 2, 1)

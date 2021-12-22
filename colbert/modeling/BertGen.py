@@ -376,6 +376,20 @@ def test_decoder_prefix():
     print(tokenizer.batch_decode(output_sequences, skip_special_tokens=True))
 
 
+def test_tok_word_map():
+    s = "welcome to new york bilibili"  # , "welcome to new york for your visit"]
+    print(tokenizer.tokenize(s))
+    inputs = tokenizer.encode_plus(s,
+                                   return_offsets_mapping=True, padding='max_length', max_length=10, truncation=True,
+                                   add_special_tokens=False)
+    print(inputs)
+    words = s.split()
+    for i in range(8):
+        idx = inputs.token_to_word(i)
+        print(idx, words[idx])
+        # print()
+
+
 if __name__ == '__main__':
     # test_encoder_decoder()
     # test_mask()
@@ -387,4 +401,5 @@ if __name__ == '__main__':
     # train()
     # test_tok()
     # train_decoder_prefix()
-    test_decoder_prefix()
+    # test_decoder_prefix()
+    test_tok_word_map()

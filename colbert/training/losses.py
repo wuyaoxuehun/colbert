@@ -62,8 +62,8 @@ def BiEncoderNllLoss(
 
     # if loss_scale:
     #     loss.mul_(loss_scale)
-    # lam = 0.5
     lam = 1
+    # lam = 1
 
     return lam * loss + (1 - lam) * dual_loss
     # return loss, correct_predictions_count

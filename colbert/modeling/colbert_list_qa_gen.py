@@ -20,7 +20,7 @@ from colbert.modeling.tokenization.query_tokenization import QueryTokenizer
 # os.environ['CUDA_VISIBLE_DEVICES'] = "0"
 from colbert.parameters import DEVICE
 from colbert.ranking.faiss_index import FaissIndex
-from colbert.ranking.index_part import IndexPart
+from colbert.ranking.index_part import *
 from colbert.utils.utils import print_message, load_checkpoint
 from corpus_cb import load_all_paras
 from colbert.modeling.reader_models import BertForDHC
@@ -28,8 +28,10 @@ from conf import *
 from conf import teacher_aug
 from colbert.training.losses import kl_loss
 from colbert.training.training_utils import *
-from colbert.modeling.transformer_decoder import TransformerDecoder, Generator, set_parameter_tf, TransformerDecoderState
-from colbert.indexing.faiss_indexers import ColbertRetriever, DPRRetriever
+# from colbert.modeling.transformer_decoder import TransformerDecoder, Generator, set_parameter_tf, TransformerDecoderState
+from colbert.indexing.faiss_indexers import *
+from colbert.modeling.hyper.PoincareDistance import PoincareDistance, exp_map, hyperdist
+import torch.nn.functional as F
 
 logger = logging.getLogger("__main__")
 
@@ -133,7 +135,7 @@ class ModelHelper:
             print('connected to server')
             self.all_paras = load_all_paras()
 
-        self.conn.send((batches, q_word_mask, retrieve_topk))
+        self.conn.send((batches, q_word_mask, retrieve_topk, faiss_depth, nprobe))
         batch_pids = self.conn.recv()
         batch_paras = [[self.all_paras[pid] for pid in pids] for pids in batch_pids]
         # batch_paras = [[self.all_paras[np.random.randint(0, len(self.all_paras))] for pid in pids] for pids in batch_pids]
@@ -303,7 +305,8 @@ class ColBERT_List_qa(nn.Module):
         D = torch.nn.functional.normalize(D, p=2, dim=2)
         return D
 
-    def score(self, Q, D, q_mask=None, d_mask=None):
+    @staticmethod
+    def score(Q, D, q_mask=None, d_mask=None):
         # print(Q.size(), D.size(), q_mask.size(), d_mask.size())
         # input()
         # print(D[-3, 0, ...])
@@ -311,10 +314,69 @@ class ColBERT_List_qa(nn.Module):
             D = D * d_mask[..., None]
             Q = Q * q_mask[..., None]
 
-        scores = einsum("qmh,dnh->qdmn", Q, D).max(-1)[0].sum(-1)
+        # scores = einsum("qmh,dnh->qdmn", Q, D).max(-1)[0].sum(-1)
+        scores = F.relu(einsum("qmh,dnh->qdmn", Q, D)).max(-1)[0].sum(-1)
         # if not torch.isfinite(scores[0]):
         # print(scores[0][-4:], scores[1][-4:])
         # input()
+        return scores
+
+    @staticmethod
+    def score___(Q, D, q_mask=None, d_mask=None):
+        # if d_mask is not None and q_mask is not None:
+        #     D = D * d_mask[..., None]
+        #     Q = Q * q_mask[..., None]
+        # 保存encode之前的向量，保留在欧式空间，从而可以使用ANN
+        qbs, qn, dim = Q.size()
+        dbs, dn = D.size()[:2]
+        Q_ = Q.view(-1, dim).repeat_interleave(dbs * dn, dim=0)
+        D_ = D.view(-1, dim).repeat((qbs * qn, 1))
+        QQ, DD = exp_map(Q_), exp_map(D_)
+        dist = PoincareDistance.apply(QQ, DD, 1e-5)
+        # dist = torch.cosh(dist) ** 2
+        # dist = - (dist ** 2) / 2
+        # dist = - dist
+        # print(dist)
+        d_mask[d_mask != 1] = 1e4
+        dist = dist.view(qbs, qn, dbs, dn)
+        # mask = q_mask[..., None, None] * d_mask[None, None, ...]
+        # mask[mask.bool()]
+        dist = (dist * d_mask[None, None, ...]).min(-1)[0]
+        dist = (dist * q_mask[..., None]).sum(1)
+        scores = - dist
+        scores = scores / (q_mask.bool().sum(-1)[:, None])
+        return scores
+
+    def score__(self, Q, D, q_mask=None, d_mask=None):
+        # if d_mask is not None and q_mask is not None:
+        #     D = D * d_mask[..., None]
+        #     Q = Q * q_mask[..., None]
+        qbs, qn, dim = Q.size()
+        dbs, dn = D.size()[:2]
+        dist = torch.zeros(size=(qbs, dbs, qn, dn)).to(Q.device)
+        for i in range(qbs):
+            for j in range(dbs):
+                ti = Q[i, ...].repeat_interleave(dn, dim=0)
+                tj = D[j, ...].repeat((qn, 1))
+                ti, tj = exp_map(ti), exp_map(tj)
+                tdist = PoincareDistance.apply(ti, tj, 1e-5)
+                # tdist = hyperdist(ti, tj)
+                dist[i, j, :, :] = tdist.view(qn, dn).contiguous()
+        # input(dist)
+        dist = dist.permute(0, 2, 1, 3)
+        # dist = torch.cosh(dist) ** 2
+        # dist = - (dist ** 2) / 2
+        # dist = - dist
+        # print(dist)
+        d_mask1 = d_mask.clone()
+        d_mask1[d_mask != 1] = 1e4
+        # mask = q_mask[..., None, None] * d_mask[None, None, ...]
+        # mask[mask.bool()]
+        dist = (dist * d_mask1[None, None, ...]).min(-1)[0]
+        dist = (dist * q_mask[..., None]).sum(1)
+        scores = - dist
+        # input(scores)
+        scores = scores / (q_mask.bool().sum(-1)[:, None])
         return scores
 
     def generate_aug_Q(self, input_ids):
@@ -370,17 +432,17 @@ class ColBERT_List_qa(nn.Module):
         # input()
         return Q, q_word_mask
 
-    def reconstruct_forward(self, input_ids, hidden_states):
-        # encoder_hidden_states = Q[:, 0:1, ...]
-        # labels = ids.clone()
-        # labels[labels == 0] = ignore_index
-        # model_output = self.decoder(input_ids=ids, encoder_hidden_states=encoder_hidden_states, labels=labels)
-        # query_reconstruction_loss = model_output.loss
-        reconstruction_criterion = nn.NLLLoss(ignore_index=0, reduction='mean')
-        decode_context = self.decoder(input_ids[:, :-1], hidden_states, TransformerDecoderState(input_ids))
-        reconstruction_text = self.generator(decode_context.view(-1, decode_context.size(2)))
-        answer_reconstruction_loss = reconstruction_criterion(reconstruction_text, input_ids[:, 1:].reshape(-1))
-        return answer_reconstruction_loss
+    # def reconstruct_forward(self, input_ids, hidden_states):
+    #     # encoder_hidden_states = Q[:, 0:1, ...]
+    #     # labels = ids.clone()
+    #     # labels[labels == 0] = ignore_index
+    #     # model_output = self.decoder(input_ids=ids, encoder_hidden_states=encoder_hidden_states, labels=labels)
+    #     # query_reconstruction_loss = model_output.loss
+    #     reconstruction_criterion = nn.NLLLoss(ignore_index=0, reduction='mean')
+    #     decode_context = self.decoder(input_ids[:, :-1], hidden_states, TransformerDecoderState(input_ids))
+    #     reconstruction_text = self.generator(decode_context.view(-1, decode_context.size(2)))
+    #     answer_reconstruction_loss = reconstruction_criterion(reconstruction_text, input_ids[:, 1:].reshape(-1))
+    #     return answer_reconstruction_loss
 
     # def forward(self, batch, labels):
     def forward(self, batch, train_dataset, is_evaluating=False, merge=False, doc_enc_training=False, eval_p_num=None, is_testing_retrieval=False, pad_p_num=None):
@@ -394,11 +456,11 @@ class ColBERT_List_qa(nn.Module):
         Q = self.query(ids, q_word_mask)
         # Q, ar_losses = self.query(input_ids=ids, attention_mask=mask, decoder_labels=[answer_ids, title_ids])
         # Q, ar_losses = self.query(input_ids=ids, attention_mask=mask, decoder_labels=title_ids)
-        q_answer_ids, q_answer_mask, q_answer_word_mask = \
-            torch.cat([ids, answer_ids, title_ids], dim=1), \
-            torch.cat([mask, answer_mask, title_mask], dim=1), \
-            torch.cat([q_word_mask, answer_word_mask, title_word_mask], dim=1)
-        Q_Answer = self.query(q_answer_ids, q_answer_mask)
+        # q_answer_ids, q_answer_mask, q_answer_word_mask = \
+        #     torch.cat([ids, answer_ids, title_ids], dim=1), \
+        #     torch.cat([mask, answer_mask, title_mask], dim=1), \
+        #     torch.cat([q_word_mask, answer_word_mask, title_word_mask], dim=1)
+        # Q_Answer = self.query(q_answer_ids, q_answer_mask)
 
         # Q, ar_losses, teacher_aug_Q, teacher_aug_Q_mask = self.query(input_ids=ids, attention_mask=mask, decoder_labels=answer_ids)
 
@@ -430,19 +492,19 @@ class ColBERT_List_qa(nn.Module):
             retrieval_scores, d_paras = self.retriever_forward(Q, q_word_mask=q_word_mask, labels=None)
             model_helper.merge_to_reader_input(batch, d_paras)
 
-        assert CrossEntropyLoss().ignore_index == -100
-        ignore_index = CrossEntropyLoss().ignore_index
+        # assert CrossEntropyLoss().ignore_index == -100
+        # ignore_index = CrossEntropyLoss().ignore_index
         # Q = self.query(ids, mask)
-        if False:
-            answer_reconstruction_loss = self.reconstruct_forward(answer_ids, Q[:, 1, ...])
-            # reconstruction_criterion(reconstruction_text, answer_ids[:, 1:].reshape(-1))
-        else:
-            answer_reconstruction_loss = torch.tensor(0).to(DEVICE)
-
-        if False:
-            query_reconstruction_loss = self.reconstruct_forward(ids, Q[:, 0, ...])
-        else:
-            query_reconstruction_loss = torch.tensor(0).to(DEVICE)
+        # if False:
+        #     answer_reconstruction_loss = self.reconstruct_forward(answer_ids, Q[:, 1, ...])
+        #     # reconstruction_criterion(reconstruction_text, answer_ids[:, 1:].reshape(-1))
+        # else:
+        #     answer_reconstruction_loss = torch.tensor(0).to(DEVICE)
+        #
+        # if False:
+        #     query_reconstruction_loss = self.reconstruct_forward(ids, Q[:, 0, ...])
+        # else:
+        #     query_reconstruction_loss = torch.tensor(0).to(DEVICE)
 
         # padded_negs = [model_helper.all_paras[_] for _ in np.random.randint(1, len(model_helper.all_paras), padded_p_num)] if not is_evaluating else []
         # padded_negs = [model_helper.all_paras[_] for _ in np.random.randint(1, len(model_helper.all_paras), pad_p_num if pad_p_num is not None else padded_p_num)]
@@ -460,12 +522,12 @@ class ColBERT_List_qa(nn.Module):
             D = self.doc(D_ids, D_mask)
 
         Q, D = Q.to(DEVICE), D.to(DEVICE)
-        if False:
-            doc_reconstruction_loss = self.reconstruct_forward(D_ids, D[:, 0, ...])
-        else:
-            doc_reconstruction_loss = torch.tensor(0).to(DEVICE)
+        # if False:
+        #     doc_reconstruction_loss = self.reconstruct_forward(D_ids, D[:, 0, ...])
+        # else:
+        #     doc_reconstruction_loss = torch.tensor(0).to(DEVICE)
 
-        Q, q_word_mask, D, d_word_mask = [_.to(DEVICE) for _ in qd_mask_to_realinput(Q=Q, D=D, q_word_mask=q_word_mask, d_word_mask=D_word_mask)]
+        Q, q_word_mask, D, d_word_mask = [_.to(DEVICE).contiguous() for _ in qd_mask_to_realinput(Q=Q, D=D, q_word_mask=q_word_mask, d_word_mask=D_word_mask)]
         # scores = self.colbert.score(Q1, D, q_mask=q_word_mask, d_mask=d_word_mask)
         # scores = (scores / q_word_mask.bool().sum(1)[:, None])
 
@@ -481,30 +543,29 @@ class ColBERT_List_qa(nn.Module):
         # ar_losses = sum(ar_losses)
 
         # return Q1.contiguous(), q_word_mask.contiguous(), D.contiguous(), d_word_mask.contiguous(), ar_losses, teacher_aug_Q, teacher_aug_Q_mask
-        Q, q_word_mask, D, d_word_mask = Q.contiguous(), q_word_mask.contiguous(), D.contiguous(), d_word_mask.contiguous()
         Q, q_word_mask, D, d_word_mask = collection_qd_masks([Q, q_word_mask, D, d_word_mask])
         positive_idxes = torch.tensor([_ * p_num for _ in range(Q.size(0))])
 
         scores = self.score(Q, D, q_mask=q_word_mask, d_mask=d_word_mask)
         cur_retriever_loss = retriever_criterion(scores=scores / SCORE_TEMPERATURE,
                                                  positive_idx_per_question=positive_idxes,
-                                                 hard_negative_idx_per_question=None)
-        if teacher_aug:
-            teacher_aug_Q, teacher_aug_Q_mask = collection_qd_masks([teacher_aug_Q, teacher_aug_Q_mask])
-            teacher_aug_scores = self.score(teacher_aug_Q, D, q_mask=teacher_aug_Q_mask, d_mask=d_word_mask)
-            cur_teacher_aug_retriever_loss = retriever_criterion(scores=teacher_aug_scores / SCORE_TEMPERATURE,
-                                                                 positive_idx_per_question=positive_idxes,
-                                                                 hard_negative_idx_per_question=None)
-
-        if kl_answer_re_loss:
-            Q_Answer, q_answer_word_mask = Q_Answer.contiguous(), q_answer_word_mask.contiguous()
-            Q_Answer, q_answer_word_mask = collection_qd_masks([Q_Answer, q_answer_word_mask])
-
-            q_answer_scores = self.score(Q_Answer, D, q_mask=q_answer_word_mask, d_mask=d_word_mask)
-            cur_q_answer_retriever_loss = retriever_criterion(scores=q_answer_scores / SCORE_TEMPERATURE,
-                                                              positive_idx_per_question=positive_idxes,
-                                                              hard_negative_idx_per_question=None)
-            q_answer_kl_loss = kl_loss(y_pred=scores / kl_temperature, y_true=q_answer_scores / kl_temperature)
+                                                 hard_negative_idx_per_question=None, dual=not is_evaluating)
+        # if teacher_aug:
+        #     teacher_aug_Q, teacher_aug_Q_mask = collection_qd_masks([teacher_aug_Q, teacher_aug_Q_mask])
+        #     teacher_aug_scores = self.score(teacher_aug_Q, D, q_mask=teacher_aug_Q_mask, d_mask=d_word_mask)
+        #     cur_teacher_aug_retriever_loss = retriever_criterion(scores=teacher_aug_scores / SCORE_TEMPERATURE,
+        #                                                          positive_idx_per_question=positive_idxes,
+        #                                                          hard_negative_idx_per_question=None)
+        cur_q_answer_retriever_loss, q_answer_kl_loss = torch.tensor(0.0).cuda(), torch.tensor(0.0).cuda()
+        # if kl_answer_re_loss:
+        #     Q_Answer, q_answer_word_mask = Q_Answer.contiguous(), q_answer_word_mask.contiguous()
+        #     Q_Answer, q_answer_word_mask = collection_qd_masks([Q_Answer, q_answer_word_mask])
+        #
+        #     q_answer_scores = self.score(Q_Answer, D, q_mask=q_answer_word_mask, d_mask=d_word_mask)
+        #     cur_q_answer_retriever_loss = retriever_criterion(scores=q_answer_scores / SCORE_TEMPERATURE,
+        #                                                       positive_idx_per_question=positive_idxes,
+        #                                                       hard_negative_idx_per_question=None)
+        #     q_answer_kl_loss = kl_loss(y_pred=scores / kl_temperature, y_true=q_answer_scores / kl_temperature)
 
         return cur_retriever_loss, cur_q_answer_retriever_loss, q_answer_kl_loss
         # return scores
