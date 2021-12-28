@@ -47,6 +47,7 @@ def BiEncoderNllLoss(
         torch.tensor(positive_idx_per_question).to(softmax_scores.device),
         reduction="mean",
     )
+    return loss
     # input(loss)
     if not dual:
         return loss

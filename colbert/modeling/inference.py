@@ -25,17 +25,17 @@ class ModelInference():
         with torch.no_grad():
             with self.amp_manager.context():
                 Q = self.colbert.query(*args, **kw_args)
-                # return Q.cpu() if to_cpu else Q
-                return ([_.cpu() for _ in Q] if type(Q) in [list, tuple] else Q.cpu()) \
-                    if to_cpu else Q
+                return Q.cpu() if to_cpu else Q
+                # return ([_.cpu() for _ in Q] if type(Q) in [list, tuple] else Q.cpu()) \
+                #     if to_cpu else Q
 
     def doc(self, *args, to_cpu=False, **kw_args):
         with torch.no_grad():
             with self.amp_manager.context():
                 D = self.colbert.doc(*args, **kw_args)
-                # return D.cpu() if to_cpu else D
-                return ([_.cpu() for _ in D] if type(D) in [list, tuple] else D.cpu()) \
-                    if to_cpu else D
+                return D.cpu() if to_cpu else D
+                # return ([_.cpu() for _ in D] if type(D) in [list, tuple] else D.cpu()) \
+                #     if to_cpu else D
 
     def queryFromText(self, queries, bsize=None, to_cpu=False):
         if bsize:
@@ -72,10 +72,9 @@ class ModelInference():
             for offset in iterator:
                 # if (offset // bsize) % args.nranks != args.rank:
                 #     continue
-                input_ids, attention_mask, d_word_mask = torch.tensor(tensorizes[0][offset:offset + bsize]), \
-                                                         torch.tensor(tensorizes[1][offset:offset + bsize]), \
-                                                         torch.tensor(tensorizes[2][offset:offset + bsize])
-                batches = self.doc(input_ids.to(DEVICE), attention_mask.to(DEVICE), to_cpu=to_cpu, output_word_weight=output_word_weight)
+                input_ids, attention_mask, active_indices, active_padding = [torch.tensor(_[offset:offset + bsize]) for _ in tensorizes]
+                d_word_mask = active_padding
+                batches = self.doc(input_ids.to(DEVICE), attention_mask.to(DEVICE), active_indices.to(DEVICE), to_cpu=to_cpu, output_word_weight=output_word_weight)
                 D_word_weight = None
                 if output_word_weight:
                     batches, D_word_weight = batches

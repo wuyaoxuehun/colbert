@@ -73,7 +73,7 @@ class DocTokenizer:
         # obj = self.tok.tokenize_q_dict(batch_text, self.segmenter, self.query_maxlen)
         obj = self.tok.tokenize_d_segmented_dict(batch_text, self.doc_maxlen, to_tensor=to_tensor)
         # ids, mask = obj['input_ids'], obj['attention_mask']
-        ids, mask, word_mask, tokens = obj
+        # ids, mask, word_mask, tokens = obj
         # postprocess for the [Q] marker and the [MASK] augmentation
         # print(ids.size())
         # if to_tensor:
@@ -81,12 +81,12 @@ class DocTokenizer:
 
         # print(self.tok.convert_ids_to_tokens(ids[0]))
         # input()
-        if bsize:
-            if output_tokens:
-                batches = _split_into_batches_bundle((ids, mask, word_mask, tokens), bsize)
-            else:
-                batches = _split_into_batches(ids, mask, word_mask, bsize)
-            return batches
-        if output_tokens:
-            return ids, mask, word_mask, tokens
-        return ids, mask, word_mask
+        # if bsize:
+        #     if output_tokens:
+        #         batches = _split_into_batches_bundle((ids, mask, word_mask, tokens), bsize)
+        #     else:
+        #         batches = _split_into_batches(ids, mask, word_mask, bsize)
+        #     return batches
+        # if output_tokens:
+        #     return ids, mask, word_mask, tokens
+        return obj

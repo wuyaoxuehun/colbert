@@ -5,8 +5,14 @@ def cache_decorator(cache_fun):
         def fun(*args, **kwargs):
             key = cache_fun(*args, **kwargs)
             if key not in cache:
+                # print('not hit' + key)
                 cache[key] = funct(*args, **kwargs)
-            return cache[key]
+                return cache[key]
+            else:
+                return cache[key]
+            # else:
+            #     print(key, len(cache.keys()))
+            #     input('hit!')
 
         return fun
 
@@ -25,6 +31,7 @@ def test_cache_decorator():
     print(func(t2))
     print(func(t1))
     print(func(t2))
+
 
 if __name__ == '__main__':
     test_cache_decorator()

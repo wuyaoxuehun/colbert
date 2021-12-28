@@ -321,11 +321,11 @@ class CBQADataset(Dataset):
         # if padded_negs and False:
         #     docs += padded_negs
 
-        D_ids, D_mask, D_word_mask = self.doc_tokenizer.tensorize_dict(docs)
+        output = self.doc_tokenizer.tensorize_dict(docs)
 
         # D_scores = torch.tensor([j for _ in batch for j in self.get_score_for_inst(_, padded_negs, eval_p_num=eval_p_num)])
         # return D_ids, D_mask, D_word_mask, None
-        return D_ids, D_mask, D_word_mask
+        return output
 
     def tokenize_for_reader(self, batch: List[Dict]):
         all_choice_features = []

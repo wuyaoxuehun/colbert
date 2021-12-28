@@ -1,3 +1,5 @@
+from multiprocessing import Pool
+
 import math
 import os
 import time
@@ -21,6 +23,10 @@ from colbert.utils.distributed import barrier
 from tqdm import tqdm
 
 from conf import doc_maxlen, pretrain_choose
+from colbert.modeling.tokenization.utils import get_real_inputs
+
+def to_real_input(t):
+    return get_real_inputs(*t, max_seq_length=doc_maxlen)
 
 
 class CollectionEncoder():
@@ -88,7 +94,7 @@ class CollectionEncoder():
         # collection = open(self.collection, encoding='utf8')
         # next(collection)
         print_message('collection total %d' % (len(collection[0]),))
-        return zip(*collection)
+        return collection
 
         # return iter(list(zip(*collection))[:1000])
 
@@ -146,7 +152,7 @@ class CollectionEncoder():
         thread.join()
 
     def encode_simple(self):
-        embs, doclens = self._encode_batch(0, list(self.iterator))
+        embs, doclens = self._encode_batch(self.iterator)
         if not os.path.exists(self.args.index_path):
             os.makedirs(self.args.index_path)
         encode_idx = self.args.rank
@@ -213,17 +219,25 @@ class CollectionEncoder():
             batch.append(passage)
         return batch
 
-    def _encode_batch(self, batch_idx, batch):
+    def _encode_batch(self, batch):
         with torch.no_grad():
             import math
             # rank_data_len = math.ceil(len(batch) / self.args.nranks)
             # start, end = self.args.rank * rank_data_len, (self.args.rank + 1) * rank_data_len
-            d_ids = [_[0] for _ in batch]
-            d_mask = [_[1] for _ in batch]
-            d_word_mask = [_[2] for _ in batch]
             # print(f'local embs num = {len(d_ids)}')
             # d_word_mask[:, 1:] = 0
-            embs = self.inference.docFromTensorize((d_ids, d_mask, d_word_mask), bsize=self.args.bsize, keep_dims=False, to_cpu=True, args=self.args)
+            from colbert.modeling.tokenization.utils import get_real_inputs
+            batch = list(zip(*batch))
+            # real_inputs = []
+            print('getting real inputs')
+            # for t in tqdm(batch):
+            #     real_inputs.append(get_real_inputs(*t, max_seq_length=doc_maxlen))
+
+            with Pool(3) as p:
+                real_inputs = list(tqdm(p.imap(to_real_input, batch), total=len(batch), disable=self.args.rank != 0))
+            real_batch = list(zip(*real_inputs))
+
+            embs = self.inference.docFromTensorize(real_batch, bsize=self.args.bsize, keep_dims=False, to_cpu=True, args=self.args)
             assert type(embs) is list
             # assert len(embs) == len(d_ids)
             print(f'local embs num = {len(embs)}')

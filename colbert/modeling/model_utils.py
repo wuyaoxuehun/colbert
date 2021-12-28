@@ -28,7 +28,7 @@ def collect_p_bqo(seq_output: torch.tensor, segment_lens):
 
 
 # Batched index_select
-def batched_index_select(t, dim, inds):
+def batch_index_select(t, dim, inds):
     dummy = inds.unsqueeze(2).expand(inds.size(0), inds.size(1), t.size(2))
     out = t.gather(dim, dummy)  # b x e x f
     return out

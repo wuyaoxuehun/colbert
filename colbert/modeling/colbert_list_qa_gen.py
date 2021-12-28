@@ -32,6 +32,7 @@ from colbert.training.training_utils import *
 from colbert.indexing.faiss_indexers import *
 from colbert.modeling.hyper.PoincareDistance import PoincareDistance, exp_map, hyperdist
 import torch.nn.functional as F
+from colbert.modeling.model_utils import batch_index_select
 
 logger = logging.getLogger("__main__")
 
@@ -243,7 +244,7 @@ class ColBERT_List_qa(nn.Module):
             return Q, ar_losses
         return Q
 
-    def query(self, input_ids, attention_mask, decoder_labels=None, **kwargs):
+    def query(self, input_ids, attention_mask, active_indices=None, decoder_labels=None, **kwargs):
         input_ids, attention_mask = input_ids.to(DEVICE), attention_mask.to(DEVICE)
         ar_losses = None
         Q = None
@@ -282,6 +283,7 @@ class ColBERT_List_qa(nn.Module):
         # Q = Q.to(torch.float32)
         # Q = self.model(input_ids, attention_mask=attention_mask, return_dict=True).last_hidden_state
         # Q = self.linear_q(Q)
+        Q = batch_index_select(Q, dim=1, inds=active_indices)
         Q = self.linear(Q)
         Q = torch.nn.functional.normalize(Q, p=2, dim=2)
         if decoder_labels is not None:
@@ -291,15 +293,13 @@ class ColBERT_List_qa(nn.Module):
             return Q, ar_losses
         return Q
 
-    def doc(self, input_ids, attention_mask, **kwargs):
+    def doc(self, input_ids, attention_mask, active_indices=None, **kwargs):
         # input_ids, attention_mask = input_ids.to(DEVICE), attention_mask.to(DEVICE)
         # D = self.t5(input_ids, attention_mask=attention_mask, return_dict=True, labels=self.get_dummy_labels(n=input_ids.size(0))).encoder_last_hidden_state
         # print("inputIds", input_ids[-3, ...], attention_mask[-3, ...])
         D = self.encoder(input_ids, attention_mask=attention_mask, return_dict=True).last_hidden_state
         # D = D.to(torch.float32)
-
-        # print("123424", D[-3, 0, ...])
-        # D = self.linear_d(D)
+        D = batch_index_select(D, dim=1, inds=active_indices)
         D = self.linear(D)
         # print("123", D[-3, 0, ...])
         D = torch.nn.functional.normalize(D, p=2, dim=2)
@@ -447,13 +447,13 @@ class ColBERT_List_qa(nn.Module):
     # def forward(self, batch, labels):
     def forward(self, batch, train_dataset, is_evaluating=False, merge=False, doc_enc_training=False, eval_p_num=None, is_testing_retrieval=False, pad_p_num=None):
         obj = train_dataset.tokenize_for_retriever(batch)
-        ids, mask, q_word_mask = [_.to(DEVICE) for _ in obj[0]]
-        answer_ids, answer_mask, answer_word_mask = [_.to(DEVICE) for _ in obj[1]]
-        title_ids, title_mask, title_word_mask = [_.to(DEVICE) for _ in obj[2]]
+        q_ids, q_attention_mask, q_active_indices, q_active_padding = [_.to(DEVICE) for _ in obj[0]]
+        # input_ids, attention_mask, active_indices, active_padding = [_.to(DEVICE) for _ in obj[1]]
+        # input_ids, attention_mask, active_indices, active_padding = [_.to(DEVICE) for _ in obj[2]]
         # Q = model.colbert.query(ids, mask)
         # print(batch[0]['question'], '\n', batch[0]['A'], '\n', d_paras[0][:2])
         # input()
-        Q = self.query(ids, q_word_mask)
+        Q = self.query(q_ids, q_attention_mask, q_active_indices)
         # Q, ar_losses = self.query(input_ids=ids, attention_mask=mask, decoder_labels=[answer_ids, title_ids])
         # Q, ar_losses = self.query(input_ids=ids, attention_mask=mask, decoder_labels=title_ids)
         # q_answer_ids, q_answer_mask, q_answer_word_mask = \
@@ -510,16 +510,16 @@ class ColBERT_List_qa(nn.Module):
         # padded_negs = [model_helper.all_paras[_] for _ in np.random.randint(1, len(model_helper.all_paras), pad_p_num if pad_p_num is not None else padded_p_num)]
         padded_negs = []
 
-        D_ids, D_mask, D_word_mask = [_.to(DEVICE) for _ in
-                                      train_dataset.tokenize_for_train_retriever(batch, padded_negs, eval_p_num=eval_p_num, is_evaluating=is_evaluating)]
+        d_ids, d_attention_mask, d_active_indices, d_active_padding = [_.to(DEVICE) for _ in
+                                                                       train_dataset.tokenize_for_train_retriever(batch, padded_negs, eval_p_num=eval_p_num, is_evaluating=is_evaluating)]
 
         # D = model.colbert.doc(D_ids, D_mask)
         if not doc_enc_training:
             with torch.no_grad():
-                D = self.doc_colbert_fixed.doc(D_ids, D_mask)
+                D = self.doc_colbert_fixed.doc(d_ids, d_attention_mask)
                 D = D.requires_grad_(requires_grad=True)
         else:
-            D = self.doc(D_ids, D_mask)
+            D = self.doc(d_ids, d_attention_mask, d_active_indices)
 
         Q, D = Q.to(DEVICE), D.to(DEVICE)
         # if False:
@@ -527,7 +527,8 @@ class ColBERT_List_qa(nn.Module):
         # else:
         #     doc_reconstruction_loss = torch.tensor(0).to(DEVICE)
 
-        Q, q_word_mask, D, d_word_mask = [_.to(DEVICE).contiguous() for _ in qd_mask_to_realinput(Q=Q, D=D, q_word_mask=q_word_mask, d_word_mask=D_word_mask)]
+        Q, q_word_mask, D, d_word_mask = [_.to(DEVICE).contiguous()
+                                          for _ in qd_mask_to_realinput(Q=Q, D=D, q_word_mask=q_active_padding, d_word_mask=d_active_padding)]
         # scores = self.colbert.score(Q1, D, q_mask=q_word_mask, d_mask=d_word_mask)
         # scores = (scores / q_word_mask.bool().sum(1)[:, None])
 

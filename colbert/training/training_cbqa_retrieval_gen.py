@@ -447,7 +447,7 @@ def eval_retrieval(args, colbert_qa=None):
     train_dataloader = DataLoader(dataset=train_dataset,
                                   sampler=train_sampler, pin_memory=True, drop_last=False,
                                   batch_size=args.batch_size, collate_fn=collate_fun())
-                                  # batch_size=args.batch_size * 2, collate_fn=collate_fun())
+    # batch_size=args.batch_size * 2, collate_fn=collate_fun())
     model = colbert_qa
 
     model_helper = load_model_helper(args.rank)
@@ -581,9 +581,9 @@ def eval_retrieval(args, colbert_qa=None):
     # torch.distributed.barrier()
     if args.distributed:
         re_loss, q_answer_re_loss, q_answer_kl_loss = [
-            distributed_concat(tensor=_.unsqueeze(0), num_total_examples=None).mean()
+            distributed_concat(tensor=_.unsqueeze(0), num_total_examples=None).mean() / len(epoch_iterator)
             for _ in
-            [re_loss / len(train_dataloader), q_answer_re_loss / len(train_dataloader), q_answer_kl_loss / len(train_dataloader)]
+            [re_loss, q_answer_re_loss, q_answer_kl_loss]
         ]
 
     eval_losses = {"eval_re_loss": re_loss.item(),

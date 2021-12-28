@@ -1,6 +1,8 @@
+import string
+
 from tqdm import tqdm
 from transformers import BertGenerationEncoder, BertGenerationDecoder, EncoderDecoderModel, BertTokenizer, T5Config, T5ForConditionalGeneration, T5Tokenizer, T5TokenizerFast, T5Model, T5EncoderModel, \
-    AutoModel, AutoTokenizer, AutoConfig
+    AutoModel, AutoTokenizer, AutoConfig, BertTokenizerFast
 import torch
 from conf import pretrain_map, encoder_tokenizer, pretrain
 
@@ -340,7 +342,11 @@ def train_decoder_prefix():
 
 
 path = pretrain_map["t5_base"]
+# path = pretrain_map["bert-base-en_uncased"]
 tokenizer = T5TokenizerFast.from_pretrained(path)
+
+
+# tokenizer = BertTokenizerFast.from_pretrained(path)
 
 
 def prefix_allowed_tokens_fn(idx, prev_input_ids):
@@ -376,17 +382,208 @@ def test_decoder_prefix():
     print(tokenizer.batch_decode(output_sequences, skip_special_tokens=True))
 
 
-def test_tok_word_map():
-    s = "welcome to new york bilibili"  # , "welcome to new york for your visit"]
+def test_tok_word_map_():
+    s = "did sa cham?"  # , "welcome to new york for your visit"]
+    import nltk
+    puncts = string.punctuation
+    ignore_words = list(puncts) + ['query: ']
+    print(tokenizer.tokenize(list(puncts), is_split_into_words=True))
     print(tokenizer.tokenize(s))
-    inputs = tokenizer.encode_plus(s,
-                                   return_offsets_mapping=True, padding='max_length', max_length=10, truncation=True,
-                                   add_special_tokens=False)
+    words = nltk.word_tokenize(s)
+    words = ["  ", "query: "] + words + ['</s>']
+    ignore_word_indices = [i for i, w in enumerate(words) if w in ignore_words]
+    max_seq_length = 16
+    print(tokenizer.tokenize(words, is_split_into_words=True))
+    inputs = tokenizer.encode_plus(words,
+                                   # return_offsets_mapping=True,
+                                   padding='max_length', max_length=max_seq_length, truncation=True,
+                                   add_special_tokens=False, is_split_into_words=True)
     print(inputs)
-    words = s.split()
-    for i in range(8):
+    # words = inputs.word_ids()
+    # words = s.split()
+    print(words)
+    word_ids = inputs.word_ids()
+    max_active_len = sum(inputs['attention_mask'])
+    attention_mask = torch.zeros(max_seq_length, max_seq_length, dtype=torch.long)
+    attention_mask[:max_active_len, :max_active_len] = 1
+    # arange = torch.arange(0, max_seq_length)
+    # column = arange.expand(max_seq_length, max_seq_length)
+    # row = arange[:, None].expand(max_seq_length, max_seq_length)
+    # attention_mask[(row < max_active_len) & (column < max_active_len)] = 1
+    active_indices = []
+
+    # for i in range(max_active_len):
+    #     word_idx = inputs.token_to_word(i)
+    #     if word_idx in ignore_word_indices:
+    #         continue
+    #     start, end = inputs.word_to_tokens(word_idx)
+    #     # for j in range(start, end):
+    #     if i + 1 < end:
+    #         attention_mask[(row == i) & ((column < start) | (column >= end))] = 0
+    #         attention_mask[(column == i) & ((row < start) | (row >= end))] = 0
+    #     else:
+    #         active_indices.append(i)
+
+    # i = 0
+    # while i < max_active_len:
+    #     word_idx = inputs.token_to_word(i)
+    #     start, end = inputs.word_to_tokens(word_idx)
+    #     for j in range(start, end - 1):
+    #         row_eqi = row == j
+    #         col_start = column < start
+    #         col_end = column >= end
+    #         row_selector = row_eqi & (col_start | col_end)
+    #         col_selector = row_selector.T
+    #         attention_mask[row_selector] = 0
+    #         attention_mask[col_selector] = 0
+    #     if word_idx not in ignore_word_indices:
+    #         active_indices.append(end - 1)
+    #     i = end
+
+    i = 0
+    while i < max_active_len:
+        word_idx = inputs.token_to_word(i)
+        # word_idx = word_ids[i]
+        start, end = inputs.word_to_tokens(word_idx)
+        attention_mask[start:end - 1, :start] = 0
+        attention_mask[start:end - 1, end:] = 0
+        attention_mask[:start, start:end - 1] = 0
+        attention_mask[end:, start:end - 1] = 0
+        if word_idx not in ignore_word_indices:
+            active_indices.append(end - 1)
+        i = end
+
+    attention_mask1 = torch.zeros(max_seq_length, max_seq_length, dtype=torch.long)
+    attention_mask1[:max_active_len, :max_active_len] = 1
+    i = 0
+    while i < max_active_len:
+        # word_idx = inputs.token_to_word(i)
+        word_idx = word_ids[i]
+        start = i
+        end = start + 1
+        while end < max_active_len and word_ids[end] == word_ids[start]:
+            end += 1
+        attention_mask1[start:end - 1, :start] = 0
+        attention_mask1[start:end - 1, end:] = 0
+        attention_mask1[:start, start:end - 1] = 0
+        attention_mask1[end:, start:end - 1] = 0
+        if word_idx not in ignore_word_indices:
+            active_indices.append(end - 1)
+        i = end
+    input(torch.allclose(attention_mask1, attention_mask))
+    # i = 0
+    # while i < max_active_len:
+    #     word_idx = inputs.token_to_word(i)
+    #     # if word_idx in ignore_word_indices:
+    #     #     i += 1
+    #     #     continue
+    #     start, end = inputs.word_to_tokens(word_idx)
+    #     # for j in range(start, end):
+    #     # if i + 1 < end:
+    #     # selector = ((row >= start) & (row < end - 1) & ((column < start) | (column >= end))) | \
+    #     #            ((column >= start) & (column < end - 1) & ((row < start) | (row >= end)))
+    #     for j in range(start, end-1):
+    #         for k in range(0, start):
+    #             attention_mask[j, k] = 0
+    #             attention_mask[k, j] = 0
+    #         for k in range(end, max_active_len):
+    #             attention_mask[j, k] = 0
+    #             attention_mask[k, j] = 0
+    #
+    #     # attention_mask[selector] = 0
+    #     # attention_mask[(start <= row) & (row <= (end - 1)) & ((column >= start) & (column < end-1))] = 1
+    #     # attention_mask[((column >= start) & (column < end-1))] = 1
+    #     # attention_mask[(column == end - 1)] = 1
+    #     # attention_mask[(column == i) & ((row < start) | (row >= end))] = 0
+    #     # else:
+    #     if word_idx not in ignore_word_indices:
+    #         active_indices.append(end - 1)
+    #     # i += 1
+    #     i = end
+
+    # for i in range(max_active_len):
+    #     word_idx = inputs.token_to_word(i)
+    #     if word_idx in ignore_word_indices:
+    #         continue
+    #     start, end = inputs.word_to_tokens(word_idx)
+    #     # for j in range(start, end):
+    #     if i + 1 < end:
+    #         # attention_mask[(row == i) & ((column < start) | (column >= end))] = 0
+    #         # attention_mask[(column == i) & ((row < start) | (row >= end))] = 0
+    #         row_eqi = row == i
+    #         col_start = column < start
+    #         col_end = column >= end
+    #         row_selector = row_eqi & (col_start | col_end)
+    #         col_selector = row_selector.T
+    #         attention_mask[row_selector] = 0
+    #         attention_mask[col_selector] = 0
+    #     else:
+    #         active_indices.append(i)
+    # attention_mask[(row >= max_active_len) | (column >= max_active_len)] = 0
+
+    active_padding = [1] * len(active_indices) + [0] * (max_seq_length - len(active_indices))
+
+    print(attention_mask)
+
+    for i in range(100):
         idx = inputs.token_to_word(i)
-        print(idx, words[idx])
+        print(i, idx, words[idx], i in active_indices)
+        # print()
+
+
+def test_tok_word_map():
+    s = "did sa cham?"  # , "welcome to new york for your visit"]
+    import nltk
+    puncts = string.punctuation
+    ignore_words = list(puncts) + ['query: ']
+    print(tokenizer.tokenize(list(puncts), is_split_into_words=True))
+    print(tokenizer.tokenize(s))
+    words = nltk.word_tokenize(s)
+    words = ["  ", "query: "] + words + ['</s>']
+    ignore_word_indices = [i for i, w in enumerate(words) if w in ignore_words]
+    max_seq_length = 16
+    print(tokenizer.tokenize(words, is_split_into_words=True))
+    token_to_word, word_to_tokens = [], {}
+    input_ids = []
+
+    for word_id, word in enumerate(words):
+        tokens = tokenizer.encode(word, add_special_tokens=False)
+        token_to_word += [word_id] * len(tokens)
+        word_to_tokens[word_id] = (len(input_ids), len(input_ids) + len(tokens))
+        input_ids += tokens
+
+    max_active_len = len(input_ids)
+    input_ids += [0] * (max_seq_length - len(input_ids))
+
+    # words = inputs.word_ids()
+    # words = s.split()
+    print(words)
+    attention_mask = torch.zeros(max_seq_length, max_seq_length, dtype=torch.long)
+    arange = torch.arange(0, max_seq_length)
+    column = arange.expand(max_seq_length, max_seq_length)
+    row = arange[:, None].expand(max_seq_length, max_seq_length)
+    attention_mask[(row < max_active_len) & (column < max_active_len)] = 1
+    active_indices = []
+
+    i = 0
+    while i < max_active_len:
+        word_idx = token_to_word[i]
+        start, end = word_to_tokens[word_idx]
+        attention_mask[start:end - 1, :start] = 0
+        attention_mask[start:end - 1, end:] = 0
+        attention_mask[:start, start:end - 1] = 0
+        attention_mask[end:, start:end - 1] = 0
+        if word_idx not in ignore_word_indices:
+            active_indices.append(end - 1)
+        i = end
+
+    active_padding = [1] * len(active_indices) + [0] * (max_seq_length - len(active_indices))
+
+    print(attention_mask)
+
+    for i in range(100):
+        idx = token_to_word[i]
+        print(i, idx, words[idx], i in active_indices)
         # print()
 
 
@@ -402,4 +599,4 @@ if __name__ == '__main__':
     # test_tok()
     # train_decoder_prefix()
     # test_decoder_prefix()
-    test_tok_word_map()
+    test_tok_word_map_()
