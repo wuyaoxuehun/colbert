@@ -1,14 +1,18 @@
 import string
 
-from tqdm import tqdm
-from transformers import BertGenerationEncoder, BertGenerationDecoder, EncoderDecoderModel, BertTokenizer, T5Config, T5ForConditionalGeneration, T5Tokenizer, T5TokenizerFast, T5Model, T5EncoderModel, \
-    AutoModel, AutoTokenizer, AutoConfig, BertTokenizerFast
+import numpy as np
+# import cupy as np
 import torch
+from tqdm import tqdm
+from transformers import BertGenerationEncoder, BertGenerationDecoder, EncoderDecoderModel, BertTokenizer, T5ForConditionalGeneration, T5TokenizerFast, T5EncoderModel, \
+    AutoConfig
+import sys
+
 from conf import pretrain_map, encoder_tokenizer, pretrain
 
 path = pretrain_map['bert']
 tokenizer = BertTokenizer.from_pretrained(path)
-from transformers.utils.logging import set_verbosity_error, set_verbosity_debug
+from transformers.utils.logging import set_verbosity_error
 
 set_verbosity_error()
 
@@ -381,9 +385,11 @@ def test_decoder_prefix():
 
     print(tokenizer.batch_decode(output_sequences, skip_special_tokens=True))
 
+from colbert.modeling.cpy.hello_world import get_real_inputs2, get_real_inputs3
 
 def test_tok_word_map_():
-    s = "did sa cham?"  # , "welcome to new york for your visit"]
+    s = "welcome to new york for youra temasd visit abcdff" * 6
+    # s = "did sa cham?" * 1
     import nltk
     puncts = string.punctuation
     ignore_words = list(puncts) + ['query: ']
@@ -392,7 +398,8 @@ def test_tok_word_map_():
     words = nltk.word_tokenize(s)
     words = ["  ", "query: "] + words + ['</s>']
     ignore_word_indices = [i for i, w in enumerate(words) if w in ignore_words]
-    max_seq_length = 16
+    max_seq_length = 180
+    # max_seq_length = 16
     print(tokenizer.tokenize(words, is_split_into_words=True))
     inputs = tokenizer.encode_plus(words,
                                    # return_offsets_mapping=True,
@@ -470,7 +477,17 @@ def test_tok_word_map_():
         if word_idx not in ignore_word_indices:
             active_indices.append(end - 1)
         i = end
-    input(torch.allclose(attention_mask1, attention_mask))
+    print(torch.allclose(attention_mask1, attention_mask))
+    print(max_active_len)
+    print(attention_mask)
+    for i in tqdm(range(1920)):
+        attention_mask = torch.tensor(get_real_inputs2(inputs['input_ids'][:max_active_len], word_ids[:max_active_len], ignore_word_indices, max_seq_length)[1])
+        # attention_mask2 = torch.tensor(get_real_inputs3(inputs['input_ids'][:max_active_len], word_ids[:max_active_len], ignore_word_indices, max_seq_length)[1])
+        # print(attention_mask2)
+        # print(attention_mask)
+        # assert (torch.allclose(attention_mask2, attention_mask))
+
+    return
     # i = 0
     # while i < max_active_len:
     #     word_idx = inputs.token_to_word(i)
@@ -587,6 +604,92 @@ def test_tok_word_map():
         # print()
 
 
+def get_real_inputs(input_ids, word_ids, ignore_word_indices, max_seq_length):
+    if len(input_ids) > max_seq_length:
+        input_ids = input_ids[:max_seq_length]
+        word_ids = word_ids[:max_seq_length]
+
+    max_active_len = len(input_ids)
+    input_ids += [0] * (max_seq_length - max_active_len)
+    attention_mask = np.zeros((max_seq_length, max_seq_length)).astype(int)
+    attention_mask[:max_active_len, :max_active_len] = 1
+    active_indices = []
+
+    i = 0
+    word_ids = word_ids
+    while i < max_active_len:
+        # word_idx = inputs.token_to_word(i)
+        word_idx = word_ids[i]
+        start = i
+        end = start + 1
+        while end < max_active_len and word_ids[end] == word_ids[start]:
+            end += 1
+        attention_mask[start:end - 1, :start] = 0
+        attention_mask[start:end - 1, end:] = 0
+        attention_mask[:start, start:end - 1] = 0
+        attention_mask[end:, start:end - 1] = 0
+        if word_idx not in ignore_word_indices:
+            active_indices.append(end - 1)
+        i = end
+    active_indices += [0] * (max_seq_length - len(active_indices))
+    active_padding = [1] * len(active_indices) + [0] * (max_seq_length - len(active_indices))
+    # attention_mask = attention_mask.tolist()
+    return input_ids, attention_mask, active_indices, active_padding
+
+
+def get_real_inputs2_(input_ids, word_ids, ignore_word_indices, max_seq_length):
+    if len(input_ids) > max_seq_length:
+        input_ids = input_ids[:max_seq_length]
+        word_ids = word_ids[:max_seq_length]
+
+    end_ids = [0] * max_seq_length
+    end_sets = set()
+    cur_end = len(word_ids) - 1
+    for idx, word_id in reversed(list(enumerate(word_ids))):
+        if word_id != word_ids[cur_end]:
+            cur_end = idx
+        end_ids[idx] = cur_end
+        end_sets.add(cur_end)
+
+    max_active_len = len(input_ids)
+    input_ids += [0] * (max_seq_length - max_active_len)
+    # attention_mask = np.zeros((max_seq_length, max_seq_length)).astype(int)
+    attention_mask = [[0] * max_seq_length for _ in range(max_seq_length)]
+    # attention_mask[:max_active_len, :max_active_len] = 0
+    # active_indices = []
+
+    start_id = 0
+    # print(end_sets)
+    for i in range(max_active_len):
+        if end_ids[i] != i:
+            for j in range(start_id, end_ids[i] + 1):
+                attention_mask[i][j] = 1
+        else:
+            t = list(end_sets | set(list(range(start_id, i + 1))))
+            for j in t:
+                attention_mask[i][j] = 1
+            start_id = i + 1
+    # active_indices = list(end_sets)
+
+    active_indices = list(end_sets - set([end_ids[_] for _ in ignore_word_indices]))
+    active_indices += [0] * (max_seq_length - len(active_indices))
+    active_padding = [1] * len(active_indices) + [0] * (max_seq_length - len(active_indices))
+    # attention_mask = attention_mask.tolist()
+    return input_ids, attention_mask, active_indices, active_padding
+
+
+def profile_attention_mask():
+    from line_profiler import LineProfiler
+    lp = LineProfiler()
+    # lp.add_function(get_real_inputs2)
+    # lp.add_function(get_real_inputs)
+    # lp.add_function(get_real_inputs3)
+    lp_wrapper = lp(test_tok_word_map_)
+
+    lp_wrapper()
+    lp.print_stats(sys.stdout)  # 打印出性能分析结果
+
+
 if __name__ == '__main__':
     # test_encoder_decoder()
     # test_mask()
@@ -599,4 +702,5 @@ if __name__ == '__main__':
     # test_tok()
     # train_decoder_prefix()
     # test_decoder_prefix()
-    test_tok_word_map_()
+    # test_tok_word_map_()
+    profile_attention_mask()

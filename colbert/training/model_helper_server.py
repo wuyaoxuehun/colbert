@@ -45,7 +45,7 @@ class ModelHelper:
                 batch_pids += self.retrieve(query=Q, topk_doc=retrieve_topk)
             else:
                 for i, (q, q_word_mask) in enumerate(batches):
-                    print(q.size(), q_word_mask.size())
+                    # print(q.size(), q_word_mask.size())
                     # input()
                     pids = self.retrieve(query=(q, q_word_mask), topk_doc=retrieve_topk)
                     batch_pids.append(pids)

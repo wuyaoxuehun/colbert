@@ -16,6 +16,7 @@ from colbert.modeling.tokenization.utils import CostomTokenizer
 from conf import *
 from corpus.sort_dataset import max_span_rouge_str, max_span_rouge12_str
 from colbert.training.training_utils import softmax
+from colbert.modeling.inference import to_real_input_all
 
 logger = logging.getLogger(name='__main__')
 
@@ -82,6 +83,10 @@ def collate_fun():
 
 
 class CBQADataset(Dataset):
+    # print('loading pre tensorize')
+    # pre_tensorize = torch.load(train_dev_pre_tensorize_file)
+    # print('loaded pre tensorize')
+
     def __init__(self, file_abbrs, tokenizer=None, doc_maxlen=None, query_maxlen=None, reader_max_seq_length=256, eager=False, mode='dev'):
         super().__init__()
         self.tokenizer: CostomTokenizer = tokenizer
@@ -102,6 +107,8 @@ class CBQADataset(Dataset):
         self.cache_data = {}
         self.sample_T = None
         self.data = self.load_data()[:]
+        # self.pre_tensorize =
+        # self.load_pretensorize()
 
     def load_data(self):
         data = []
@@ -128,7 +135,7 @@ class CBQADataset(Dataset):
         else:
             data = data[:]
 
-        return data
+        return data[:]
 
     def merge_to_reader_input_(self, batch_examples, batch_paras):
         para_idx = 0
@@ -320,6 +327,11 @@ class CBQADataset(Dataset):
 
         # if padded_negs and False:
         #     docs += padded_negs
+
+        # tensorized_docs = []
+        # for doc in docs:
+        #     tensorized_docs.append(self.pre_tensorize[doc['idx']])
+        # output = to_real_input_all(tensorized_docs)
 
         output = self.doc_tokenizer.tensorize_dict(docs)
 

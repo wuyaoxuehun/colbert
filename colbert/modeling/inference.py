@@ -1,3 +1,6 @@
+from multiprocessing import Pool
+
+import numpy as np
 import torch
 
 from colbert.modeling.colbert_list import ColBERT_List
@@ -8,6 +11,18 @@ from tqdm import tqdm
 
 from colbert.training.training_utils import Q_TOPK, D_TOPK, qd_mask_to_realinput
 
+from colbert.modeling.cpy.hello_world import get_real_inputs2, get_real_inputs3
+from conf import doc_maxlen
+
+
+def to_real_input(t):
+    return get_real_inputs2(*t, max_seq_length=doc_maxlen)
+
+def to_real_input_all(t):
+    real_inputs = [to_real_input(_) for _ in t]
+    t = list(zip(*real_inputs))
+    t[1] = np.array(t[1])
+    return [torch.tensor(_) for _ in t]
 
 class ModelInference():
     def __init__(self, colbert, segmenter, amp=False, query_maxlen=None, doc_maxlen=None):
@@ -62,17 +77,29 @@ class ModelInference():
         return self.doc(input_ids, attention_mask, keep_dims=keep_dims)
 
     def docFromTensorize(self, tensorizes, bsize=None, keep_dims=True, to_cpu=False, output_word_weight=False, args=None):
+
         if bsize:
             D = []
             D_word_weight_all = []
-            iterator = range(0, len(tensorizes[0]), bsize)
-            if len(tensorizes[0]) > 16:
+            iterator = range(0, len(tensorizes), bsize)
+            if len(tensorizes) > 16:
                 iterator = tqdm(iterator, disable=args.rank != args.nranks - 1)
 
             for offset in iterator:
                 # if (offset // bsize) % args.nranks != args.rank:
                 #     continue
-                input_ids, attention_mask, active_indices, active_padding = [torch.tensor(_[offset:offset + bsize]) for _ in tensorizes]
+                # t = [torch.tensor(_[offset:offset + bsize]) for _ in tensorizes]
+                # t = list(zip(*[_[offset:offset + bsize] for _ in tensorizes]))
+                t = tensorizes[offset:offset + bsize]
+                # with Pool(1) as p:
+                # real_inputs = list(tqdm(p.imap(to_real_input, t), total=len(t), disable=args.rank != 0))
+                # real_inputs = list((p.imap(to_real_input, t)))
+                # real_inputs = [to_real_input(_) for _ in t]
+                # t = list(zip(*real_inputs))
+                # t[1] = np.array(t[1])
+                # input_ids, attention_mask, active_indices, active_padding = [torch.tensor(_) for _ in t]
+                input_ids, attention_mask, active_indices, active_padding = to_real_input_all(t)
+
                 d_word_mask = active_padding
                 batches = self.doc(input_ids.to(DEVICE), attention_mask.to(DEVICE), active_indices.to(DEVICE), to_cpu=to_cpu, output_word_weight=output_word_weight)
                 D_word_weight = None

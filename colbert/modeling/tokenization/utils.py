@@ -15,6 +15,7 @@ from colbert.utils.func_utils import cache_decorator
 from conf import Q_marker_token, D_marker_token, encoder_tokenizer, CLS, SEP, pretrain_choose, answer_SEP, answer_prefix, title_prefix
 from nltk.tokenize import sent_tokenize
 import spacy
+from colbert.modeling.cpy.hello_world import get_real_inputs2
 
 
 def cache_function(*args, **kwargs):
@@ -45,8 +46,8 @@ class CostomTokenizer(encoder_tokenizer):
         # self.word_tokenizer = lambda s: s.split()
         self.word_tokenizer = nltk.word_tokenize
 
-        # if pretrain_choose.find("t5") != -1:
-        #     self.ignore_words |= {CLS, SEP}
+        if pretrain_choose.find("t5") != -1:
+            self.ignore_words |= {CLS, SEP, answer_SEP}
 
     def truncate_seq(self, tokens_list: List[List[Any]], max_len, keep=None, stategy="longest"):
         if stategy != "longest":
@@ -197,8 +198,8 @@ class CostomTokenizer(encoder_tokenizer):
         return input_ids, attention_mask, word_pos0_mask, cur_segments
 
     # @cache_decorator(cache_fun=cache_function)
-    def tokenize_multiple_parts(self, parts=None, max_seq_length=None, weights=None, generation_ending_token_idx=None, keep=(),
-                                marker_token=None, add_special_tokens=True, prefix=None, output_real=True):
+    def tokenize_multiple_parts_word(self, parts=None, max_seq_length=None, weights=None, generation_ending_token_idx=None, keep=(),
+                                     marker_token=None, add_special_tokens=True, prefix=None, output_real=True):
         assert len(weights) == len(parts)
         word_parts = parts
         # for part in parts:
@@ -217,11 +218,42 @@ class CostomTokenizer(encoder_tokenizer):
         input_ids = inputs['input_ids']
         word_ids = inputs.word_ids()
         if output_real:
-            input_ids, attention_mask, active_indices, active_padding = get_real_inputs(input_ids, word_ids, ignore_word_indices, max_seq_length)
+            input_ids, attention_mask, active_indices, active_padding = get_real_inputs2(input_ids, word_ids, ignore_word_indices, max_seq_length)
             return input_ids, attention_mask, active_indices, active_padding
         # assert len(input_ids) == len(attention_mask) == len(active_padding) == len(active_indices) == max_seq_length, \
         #     (len(input_ids), len(attention_mask), len(active_padding), len(active_indices))
         return input_ids, word_ids, ignore_word_indices
+
+    def tokenize_multiple_parts(self, parts=None, max_seq_length=None, weights=None, generation_ending_token_idx=None, keep=(),
+                                marker_token=None, add_special_tokens=True, prefix=None, output_real=True):
+        assert len(weights) == len(parts)
+        word_parts = parts
+        # for part in parts:
+        #     # words = nltk.word_tokenize(part)
+        #     words = self.word_tokenizer(part)
+        #     word_parts.append(words)
+        # words = ["query: "] + words + ['</s>']
+
+        if add_special_tokens:
+            words = CLS + marker_token + SEP.join(word_parts) + SEP
+        else:
+            assert False
+            words = ([prefix] if prefix else []) + join_list(SEP, word_parts) + [SEP]
+
+        # ignore_word_indices = [i for i, w in enumerate(words) if w in self.ignore_words]
+        inputs = self.encode_plus(words,
+                         padding='max_length',
+                         max_length=max_seq_length,
+                         truncation=True,
+                         add_special_tokens=False)
+
+        input_ids = inputs['input_ids']
+        attention_mask = inputs['attention_mask']
+        active_len = sum(attention_mask)
+        active_indices = list(range(active_len)) + [0] * (max_seq_length - active_len)
+        active_padding = [1] * active_len + [0] * (max_seq_length - active_len)
+        # word_ids = inputs.word_ids()
+        return input_ids, attention_mask, active_indices, active_padding
 
     def tokenize_multiple_parts_bak(self, parts=None, max_seq_length=None, weights=None, generation_ending_token_idx=None, keep=(),
                                     marker_token=None, add_special_tokens=True, prefix=None):
@@ -279,22 +311,28 @@ class CostomTokenizer(encoder_tokenizer):
         #     (len(input_ids), len(attention_mask), len(active_padding), len(active_indices))
         return input_ids, attention_mask, active_indices, active_padding
 
-    def tokenize_q_noopt_segmented_dict(self, batch_examples, max_seq_length, answer_max_seq_length=64, marker_token=None):
+    def tokenize_q_noopt_segmented_dict(self, batch_examples, max_seq_length, answer_max_seq_length=64, marker_token=None, word=False):
         num = 4
         q = [[] for _ in range(num)]
         ans = [[] for _ in range(num)]
         title = [[] for _ in range(num)]
 
         for t in batch_examples:
-            question = nltk.word_tokenize(t['question'])
+            question = t['question']
+            if word:
+                question = nltk.word_tokenize(question)
             enum = [question]
             output = self.tokenize_multiple_parts(parts=enum, max_seq_length=max_seq_length, weights=[1] * len(enum),
                                                   generation_ending_token_idx=None, keep=[], marker_token=Q_marker_token)
             for i in range(num):
                 q[i].append(output[i])
+
+            continue
+
             titles, sents = self.get_relevant_title_and_sents(t, max_title_num=3, max_sents_num=0)
             # answers = t['answers'][:4] + list(titles)
             answers = t['answers'][:4]
+            answers = [nltk.word_tokenize(_) for _ in answers]
             enum = answers
             output = self.tokenize_multiple_parts(parts=enum, max_seq_length=answer_max_seq_length, weights=[1] * len(enum),
                                                   generation_ending_token_idx=None, keep=[], marker_token=Q_marker_token,
@@ -304,6 +342,7 @@ class CostomTokenizer(encoder_tokenizer):
                 ans[i].append(output[i])
 
             enum = list(titles)
+            enum = [nltk.word_tokenize(_) for _ in enum]
             output = self.tokenize_multiple_parts(parts=enum, max_seq_length=answer_max_seq_length, weights=[1] * len(enum),
                                                   generation_ending_token_idx=None, keep=[], marker_token=Q_marker_token,
                                                   add_special_tokens=False, prefix=None)  # prefix=title_prefix
@@ -312,9 +351,11 @@ class CostomTokenizer(encoder_tokenizer):
                 title[i].append(output[i])
 
             # return doc_tokens, doc_words, tok_to_orig_seg_map, word_pos0_mask
+        for t in [q, ans, title]:
+            t[1] = np.array(t[1])
         return [[torch.tensor(_) for _ in t] for t in [q, ans, title]]
 
-    def tokenize_d_segmented_dict(self, batch_text, max_seq_length, tqdm_enable=False, to_tensor=True):
+    def tokenize_d_segmented_dict(self, batch_text, max_seq_length, tqdm_enable=False, to_tensor=True, word=False):
         num = 4
         d = [[] for _ in range(num)]
 
@@ -324,11 +365,15 @@ class CostomTokenizer(encoder_tokenizer):
         for t in batch_text:
             if t['title'][0] == "\"":
                 t['title'] = t['title'][1:-1]
-            doc = [t['title_words'], t['text_words']]
+            if word:
+                doc = [t['title_words'], t['text_words']]
+            else:
+                doc = [t['title'], t['text']]
             output = self.tokenize_multiple_parts(parts=doc, max_seq_length=max_seq_length, weights=[1] * 2,
                                                   generation_ending_token_idx=None, keep=[], marker_token=D_marker_token, output_real=to_tensor)
             for i in range(len(output)):
                 d[i].append(output[i])
+        d[1] = np.array(d[1])
         if to_tensor:
             return [torch.tensor(_) for _ in d]
         else:

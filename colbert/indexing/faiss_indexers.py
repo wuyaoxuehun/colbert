@@ -206,7 +206,7 @@ class ColbertRetriever(DenseFaissRetriever):
         Q, q_word_mask = query
         assert len(Q.size()) == 2
         pids = self.retrieve(Q.unsqueeze(0), verbose=False)[0]
-        input(len(pids))
+        # input(len(pids))
         weighted_q = Q * q_word_mask[:, None]
         Q = weighted_q.unsqueeze(0)
         Q = Q.permute(0, 2, 1)

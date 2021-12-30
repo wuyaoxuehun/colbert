@@ -25,9 +25,6 @@ from tqdm import tqdm
 from conf import doc_maxlen, pretrain_choose
 from colbert.modeling.tokenization.utils import get_real_inputs
 
-def to_real_input(t):
-    return get_real_inputs(*t, max_seq_length=doc_maxlen)
-
 
 class CollectionEncoder():
     def __init__(self, args, process_idx, num_processes, model=None):
@@ -79,6 +76,8 @@ class CollectionEncoder():
         if (split_num - end) < part_len:
             end += 10
         print_message(f"rank{self.args.rank}=[{start}, {end}]")
+
+        # start, end = 0, 1
         for i in range(start, end):
             sub_collection_path = f'{pref}_{i}.pt'
             # input(sub_collection_path)
@@ -226,18 +225,14 @@ class CollectionEncoder():
             # start, end = self.args.rank * rank_data_len, (self.args.rank + 1) * rank_data_len
             # print(f'local embs num = {len(d_ids)}')
             # d_word_mask[:, 1:] = 0
-            from colbert.modeling.tokenization.utils import get_real_inputs
+            # from colbert.modeling.tokenization.utils import get_real_inputs
             batch = list(zip(*batch))
             # real_inputs = []
-            print('getting real inputs')
+            # print('getting real inputs')
             # for t in tqdm(batch):
             #     real_inputs.append(get_real_inputs(*t, max_seq_length=doc_maxlen))
 
-            with Pool(3) as p:
-                real_inputs = list(tqdm(p.imap(to_real_input, batch), total=len(batch), disable=self.args.rank != 0))
-            real_batch = list(zip(*real_inputs))
-
-            embs = self.inference.docFromTensorize(real_batch, bsize=self.args.bsize, keep_dims=False, to_cpu=True, args=self.args)
+            embs = self.inference.docFromTensorize(batch, bsize=self.args.bsize, keep_dims=False, to_cpu=True, args=self.args)
             assert type(embs) is list
             # assert len(embs) == len(d_ids)
             print(f'local embs num = {len(embs)}')

@@ -167,21 +167,21 @@ def train(args):
         q_answer_kl_loss = MAverage()
 
         reader_loss_total = 0
-        pos_weight, hard_neg_weight, neg_weight = scheduler_neg(epoch, args.epoch)
-        logger.info(f"now neg weight={scheduler_neg(epoch, args.epoch)}")
-        for i in range(args.batch_size * opt_num):
-            # labels[i, i * pn_num:i * pn_num + pos_num] = score[i]
-            base_offset = (i // opt_num) * p_num * opt_num
-            # next_base_offset = (i // 4 + 1) * p_num * 4
-            neg_weight_mask[i, base_offset:base_offset + pos_num] = pos_weight
-            neg_weight_mask[i, base_offset + pos_num:base_offset + pos_num + neg_num] = hard_neg_weight
-            neg_weight_mask[i, 0:base_offset] = neg_weight
-            neg_weight_mask[i, base_offset + pos_num + neg_num:] = neg_weight
+        # pos_weight, hard_neg_weight, neg_weight = scheduler_neg(epoch, args.epoch)
+        # logger.info(f"now neg weight={scheduler_neg(epoch, args.epoch)}")
+        # for i in range(args.batch_size * opt_num):
+        #     # labels[i, i * pn_num:i * pn_num + pos_num] = score[i]
+        #     base_offset = (i // opt_num) * p_num * opt_num
+        #     # next_base_offset = (i // 4 + 1) * p_num * 4
+        #     neg_weight_mask[i, base_offset:base_offset + pos_num] = pos_weight
+        #     neg_weight_mask[i, base_offset + pos_num:base_offset + pos_num + neg_num] = hard_neg_weight
+        #     neg_weight_mask[i, 0:base_offset] = neg_weight
+        #     neg_weight_mask[i, base_offset + pos_num + neg_num:] = neg_weight
 
-        train_dataset.sample_T = sample_T_scheduler(epoch, args.epoch)
-        logger.info(f"now sample_T = {sample_T_scheduler(epoch, args.epoch)}")
-        coef = coef_scheduler(epoch, args.epoch)
-        logger.info(f"now coef = {coef}")
+        # train_dataset.sample_T = sample_T_scheduler(epoch, args.epoch)
+        # logger.info(f"now sample_T = {sample_T_scheduler(epoch, args.epoch)}")
+        # coef = coef_scheduler(epoch, args.epoch)
+        # logger.info(f"now coef = {coef}")
 
         for step, batch in enumerate(epoch_iterator):
             # Skip past any already trained steps if resuming training

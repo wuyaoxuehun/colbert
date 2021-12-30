@@ -129,6 +129,9 @@ class ModelHelper:
     #     Q = self.query_tokenizer.tensorize_allopt_dict(queries)
     #     return Q
 
+    def load_paras(self):
+        self.all_paras = load_all_paras()
+
     def retrieve_for_encoded_queries(self, batches, q_word_mask=None, retrieve_topk=10):
         if self.conn is None:
             address = ('localhost', 6001)
@@ -300,6 +303,8 @@ class ColBERT_List_qa(nn.Module):
         D = self.encoder(input_ids, attention_mask=attention_mask, return_dict=True).last_hidden_state
         # D = D.to(torch.float32)
         D = batch_index_select(D, dim=1, inds=active_indices)
+        # t = attention_mask[0]
+        # print(t.sum(-1).max(0)[0], active_indices[0])
         D = self.linear(D)
         # print("123", D[-3, 0, ...])
         D = torch.nn.functional.normalize(D, p=2, dim=2)
@@ -314,8 +319,9 @@ class ColBERT_List_qa(nn.Module):
             D = D * d_mask[..., None]
             Q = Q * q_mask[..., None]
 
-        # scores = einsum("qmh,dnh->qdmn", Q, D).max(-1)[0].sum(-1)
-        scores = F.relu(einsum("qmh,dnh->qdmn", Q, D)).max(-1)[0].sum(-1)
+        scores = einsum("qmh,dnh->qdmn", Q, D).max(-1)[0].sum(-1)
+        scores = scores / (q_mask.bool().sum(-1)[:, None])
+        # scores = F.relu(einsum("qmh,dnh->qdmn", Q, D)).max(-1)[0].sum(-1)
         # if not torch.isfinite(scores[0]):
         # print(scores[0][-4:], scores[1][-4:])
         # input()
@@ -482,7 +488,8 @@ class ColBERT_List_qa(nn.Module):
             if print_generate:
                 return
             # Q, q_word_mask = torch.cat([Q, teacher_aug_Q], dim=1), torch.cat([q_word_mask, teacher_aug_Q_mask], dim=1)
-            retrieval_scores, d_paras = self.retriever_forward(Q, q_word_mask=q_word_mask, labels=None)
+            # retrieval_scores, d_paras = self.retriever_forward(Q, q_word_mask=q_word_mask, labels=None)
+            retrieval_scores, d_paras = self.retriever_forward(Q, q_word_mask=q_active_padding, labels=None)
             train_dataset.merge_to_reader_input(batch, d_paras)
             return
         # return Q.contiguous(), q_word_mask.contiguous(), None, None, ar_loss
@@ -548,6 +555,7 @@ class ColBERT_List_qa(nn.Module):
         positive_idxes = torch.tensor([_ * p_num for _ in range(Q.size(0))])
 
         scores = self.score(Q, D, q_mask=q_word_mask, d_mask=d_word_mask)
+
         cur_retriever_loss = retriever_criterion(scores=scores / SCORE_TEMPERATURE,
                                                  positive_idx_per_question=positive_idxes,
                                                  hard_negative_idx_per_question=None, dual=not is_evaluating)

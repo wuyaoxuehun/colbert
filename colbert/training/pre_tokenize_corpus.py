@@ -114,7 +114,8 @@ def pre_word_tokenize():
     output_dir = "/home2/awu/testcb/tests/webqdata/"
     file_prefix, file_ext = os.path.splitext(file_name)
     pref = file_prefix + f'_word'
-    pre_tok_file = pref + '.pt'
+    # pre_tok_file = pref + '.pt'
+    pre_tok_file = pref + '.json'
     pre_tok_path = os.path.join(output_dir, pre_tok_file)
     collection = open(collection_path, encoding='utf8')
     collection = json.load(collection)[:]
@@ -122,8 +123,8 @@ def pre_word_tokenize():
         res = list(tqdm(p.imap(sub_word_tokenize, collection), total=len(collection)))
     print('saving to ' + pre_tok_path)
     # dump_json(res, pre_tok_path)
-    # dump_json(res, pre_tok_path, indent=False)
-    torch.save(res, pre_tok_path)
+    dump_json(res, pre_tok_path, indent=False)
+    # torch.save(res, pre_tok_path)
 
 
 def json_to_pt():
