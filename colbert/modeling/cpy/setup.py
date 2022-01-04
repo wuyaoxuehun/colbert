@@ -1,6 +1,8 @@
 from setuptools import setup
 from Cython.Build import cythonize
+import numpy
 
 setup(
-    ext_modules=cythonize("hello_world.py")
+    ext_modules=cythonize("hello_world.py"),
+    include_dirs=[numpy.get_include()]
 )

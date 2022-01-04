@@ -29,7 +29,8 @@ def main():
 # from colbert.indexing.faiss_indexers import DPRRetriever, DenseFlatIndexer
 if __name__ == "__main__":
     print(torch.cuda.device_count())
-    # main()
+    main()
+    exit()
     from line_profiler import LineProfiler
     import sys
 

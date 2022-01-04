@@ -31,7 +31,7 @@ def pre_tokenize_corpus():
     base_dir, file_name = os.path.split(collection_path)
     output_dir = "/home2/awu/testcb/tests/webqdata/"
     file_prefix, file_ext = os.path.splitext(file_name)
-    pref = file_prefix + f'_{doc_maxlen}_{pretrain_choose}_tokenized'
+    pref = file_prefix + f'_{doc_maxlen}_{pretrain_choose}_tokenized_{"word" if use_word else "tok"}'
     pre_tok_file = pref + '.pt'
     # pre_tok_file = file_prefix + '_tokenized_no_word_mask.pt'
     # pre_tok_path = os.path.join(base_dir, pre_tok_file)
@@ -156,14 +156,14 @@ if __name__ == '__main__':
     # lp_wrapper()
     # lp.print_stats(sys.stdout)  # 打印出性能分析结果
     # exit()
-
-    from colbert.modeling.tokenization.utils import CostomTokenizer
-
-    lp = LineProfiler()
-    lp.add_function(CostomTokenizer.tokenize_multiple_parts)
-    lp.add_function(CostomTokenizer.tokenize_d_segmented_dict)
-    lp_wrapper = lp(pre_tokenize_corpus)
-    lp_wrapper()
-    lp.print_stats(sys.stdout)  # 打印出性能分析结果
+    pre_tokenize_corpus()
+    # from colbert.modeling.tokenization.utils import CostomTokenizer
+    #
+    # lp = LineProfiler()
+    # lp.add_function(CostomTokenizer.tokenize_multiple_parts)
+    # lp.add_function(CostomTokenizer.tokenize_d_segmented_dict)
+    # lp_wrapper = lp(pre_tokenize_corpus)
+    # lp_wrapper()
+    # lp.print_stats(sys.stdout)  # 打印出性能分析结果
     # pre_tokenize_corpus()
     # modify_word_pos_mask()

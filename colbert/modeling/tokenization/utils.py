@@ -14,8 +14,8 @@ import nltk
 from colbert.utils.func_utils import cache_decorator
 from conf import Q_marker_token, D_marker_token, encoder_tokenizer, CLS, SEP, pretrain_choose, answer_SEP, answer_prefix, title_prefix
 from nltk.tokenize import sent_tokenize
-import spacy
 from colbert.modeling.cpy.hello_world import get_real_inputs2
+from conf import *
 
 
 def cache_function(*args, **kwargs):
@@ -24,6 +24,8 @@ def cache_function(*args, **kwargs):
     max_seq_length = kwargs.get('max_seq_length')
     if weights is None:
         weights = [1] * len(parts)
+    if type(parts[0]) == list:
+        parts = sum(parts, [])
     key = [str(hash(''.join(parts)))] + [str(_) for _ in weights] + [str(max_seq_length)]
     return '-'.join(key)
 
@@ -48,6 +50,8 @@ class CostomTokenizer(encoder_tokenizer):
 
         if pretrain_choose.find("t5") != -1:
             self.ignore_words |= {CLS, SEP, answer_SEP}
+
+        self.tokenize_parts = self.tokenize_multiple_parts_tok if not use_word else self.tokenize_multiple_parts_word
 
     def truncate_seq(self, tokens_list: List[List[Any]], max_len, keep=None, stategy="longest"):
         if stategy != "longest":
@@ -224,8 +228,8 @@ class CostomTokenizer(encoder_tokenizer):
         #     (len(input_ids), len(attention_mask), len(active_padding), len(active_indices))
         return input_ids, word_ids, ignore_word_indices
 
-    def tokenize_multiple_parts(self, parts=None, max_seq_length=None, weights=None, generation_ending_token_idx=None, keep=(),
-                                marker_token=None, add_special_tokens=True, prefix=None, output_real=True):
+    def tokenize_multiple_parts_tok(self, parts=None, max_seq_length=None, weights=None, generation_ending_token_idx=None, keep=(),
+                                    marker_token=None, add_special_tokens=True, prefix=None, output_real=True):
         assert len(weights) == len(parts)
         word_parts = parts
         # for part in parts:
@@ -242,10 +246,10 @@ class CostomTokenizer(encoder_tokenizer):
 
         # ignore_word_indices = [i for i, w in enumerate(words) if w in self.ignore_words]
         inputs = self.encode_plus(words,
-                         padding='max_length',
-                         max_length=max_seq_length,
-                         truncation=True,
-                         add_special_tokens=False)
+                                  padding='max_length',
+                                  max_length=max_seq_length,
+                                  truncation=True,
+                                  add_special_tokens=False)
 
         input_ids = inputs['input_ids']
         attention_mask = inputs['attention_mask']
@@ -311,7 +315,7 @@ class CostomTokenizer(encoder_tokenizer):
         #     (len(input_ids), len(attention_mask), len(active_padding), len(active_indices))
         return input_ids, attention_mask, active_indices, active_padding
 
-    def tokenize_q_noopt_segmented_dict(self, batch_examples, max_seq_length, answer_max_seq_length=64, marker_token=None, word=False):
+    def tokenize_q_noopt_segmented_dict(self, batch_examples, max_seq_length, answer_max_seq_length=64, marker_token=None):
         num = 4
         q = [[] for _ in range(num)]
         ans = [[] for _ in range(num)]
@@ -319,11 +323,11 @@ class CostomTokenizer(encoder_tokenizer):
 
         for t in batch_examples:
             question = t['question']
-            if word:
+            if use_word:
                 question = nltk.word_tokenize(question)
             enum = [question]
-            output = self.tokenize_multiple_parts(parts=enum, max_seq_length=max_seq_length, weights=[1] * len(enum),
-                                                  generation_ending_token_idx=None, keep=[], marker_token=Q_marker_token)
+            output = self.tokenize_parts(parts=enum, max_seq_length=max_seq_length, weights=[1] * len(enum),
+                                         generation_ending_token_idx=None, keep=[], marker_token=Q_marker_token)
             for i in range(num):
                 q[i].append(output[i])
 
@@ -365,12 +369,12 @@ class CostomTokenizer(encoder_tokenizer):
         for t in batch_text:
             if t['title'][0] == "\"":
                 t['title'] = t['title'][1:-1]
-            if word:
+            if use_word:
                 doc = [t['title_words'], t['text_words']]
             else:
                 doc = [t['title'], t['text']]
-            output = self.tokenize_multiple_parts(parts=doc, max_seq_length=max_seq_length, weights=[1] * 2,
-                                                  generation_ending_token_idx=None, keep=[], marker_token=D_marker_token, output_real=to_tensor)
+            output = self.tokenize_parts(parts=doc, max_seq_length=max_seq_length, weights=[1] * 2,
+                                         generation_ending_token_idx=None, keep=[], marker_token=D_marker_token, output_real=to_tensor)
             for i in range(len(output)):
                 d[i].append(output[i])
         d[1] = np.array(d[1])

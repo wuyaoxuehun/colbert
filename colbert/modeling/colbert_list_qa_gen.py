@@ -288,10 +288,12 @@ class ColBERT_List_qa(nn.Module):
         # Q = self.linear_q(Q)
         Q = batch_index_select(Q, dim=1, inds=active_indices)
         Q = self.linear(Q)
-        Q = torch.nn.functional.normalize(Q, p=2, dim=2)
+        if l2norm:
+            Q = torch.nn.functional.normalize(Q, p=2, dim=2)
         if decoder_labels is not None:
             if teacher_aug:
-                teacher_aug_Q = torch.nn.functional.normalize(self.linear(teacher_aug_Q), p=2, dim=2)
+                if l2norm:
+                    teacher_aug_Q = torch.nn.functional.normalize(self.linear(teacher_aug_Q), p=2, dim=2)
                 return Q, ar_losses, teacher_aug_Q, teacher_aug_Q_mask
             return Q, ar_losses
         return Q
@@ -307,7 +309,8 @@ class ColBERT_List_qa(nn.Module):
         # print(t.sum(-1).max(0)[0], active_indices[0])
         D = self.linear(D)
         # print("123", D[-3, 0, ...])
-        D = torch.nn.functional.normalize(D, p=2, dim=2)
+        if l2norm:
+            D = torch.nn.functional.normalize(D, p=2, dim=2)
         return D
 
     @staticmethod

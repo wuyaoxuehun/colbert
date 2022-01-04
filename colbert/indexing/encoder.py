@@ -22,7 +22,7 @@ import json
 from colbert.utils.distributed import barrier
 from tqdm import tqdm
 
-from conf import doc_maxlen, pretrain_choose
+from conf import doc_maxlen, pretrain_choose, corpus_tokenized_prefix
 from colbert.modeling.tokenization.utils import get_real_inputs
 
 
@@ -63,9 +63,9 @@ class CollectionEncoder():
     def _initialize_iterator(self, overwrite=False):
         # return open(self.collection)
         # collection = iter(list(open(self.collection))[50000:])
-        base_dir, file_name = os.path.split(self.collection)
-        file_prefix, file_ext = os.path.splitext(file_name)
-        pref = file_prefix + f'_{doc_maxlen}_{pretrain_choose}_tokenized'
+        # base_dir, file_name = os.path.split(self.collection)
+        # file_prefix, file_ext = os.path.splitext(file_name)
+        # pref = file_prefix + f'_{doc_maxlen}_{pretrain_choose}_tokenized'
         # pre_tok_file = f'{pref}_tokenized.pt'
         # pre_tok_file = file_prefix + '_tokenized_no_word_mask.pt'
         # pre_tok_path = os.path.join(base_dir, pre_tok_file)
@@ -79,13 +79,14 @@ class CollectionEncoder():
 
         # start, end = 0, 1
         for i in range(start, end):
-            sub_collection_path = f'{pref}_{i}.pt'
+            # sub_collection_path = f'{pref}_{i}.pt'
             # input(sub_collection_path)
-            collection_path = os.path.join(base_dir, sub_collection_path)
+            collection_path = corpus_tokenized_prefix + f"{i}.pt"
+            # input(collection_path)
             if not os.path.exists(collection_path):
                 break
             print_message(f"loading sub collection {collection_path} for rank {self.args.rank}")
-            sub_collection = torch.load(os.path.join(base_dir, sub_collection_path))
+            sub_collection = torch.load(collection_path)
             for j in range(3):
                 collection[j].extend(sub_collection[j])
 

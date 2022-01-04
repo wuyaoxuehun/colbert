@@ -385,7 +385,7 @@ def test_decoder_prefix():
 
     print(tokenizer.batch_decode(output_sequences, skip_special_tokens=True))
 
-from colbert.modeling.cpy.hello_world import get_real_inputs2, get_real_inputs3
+from colbert.modeling.cpy.hello_world import get_real_inputs2
 
 def test_tok_word_map_():
     s = "welcome to new york for youra temasd visit abcdff" * 6
