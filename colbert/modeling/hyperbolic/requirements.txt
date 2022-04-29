@@ -1,5 +1,0 @@
-numpy
-networkx
-scikit-learn
-torch
-torchvision

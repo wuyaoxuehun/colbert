@@ -17,6 +17,7 @@ class CBQAArguments:
         self.add_argument('--epoch', dest='epoch', default=6, type=int)
         self.add_argument('--retriever_lr', dest='retriever_lr', default="1e-5", type=float)
         self.add_argument('--lr', dest='lr', default="2e-5", type=float)
+        self.add_argument('--scoretemperature', dest='scoretemperature', default=3e-2, type=float)
         self.add_argument('--train_files', dest='train_files', type=str)
         self.add_argument('--dev_files', dest='dev_files', type=str)
         self.add_argument('--test_files', dest='test_files', type=str)
@@ -29,6 +30,7 @@ class CBQAArguments:
         self.add_argument('--index_path', default="", type=str)
 
         # self.add_argument('--gpu_ids', type=str, default='-1', help='gpu ids: e.g. 0  0,1,2, 0,2. use -1 for CPU')
+
     def add_argument(self, *args, **kw_args):
         return self.parser.add_argument(*args, **kw_args)
 

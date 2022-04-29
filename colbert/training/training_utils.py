@@ -4,7 +4,11 @@ import torch
 import numpy as np
 from transformers import Adafactor
 from torch.distributed import get_rank
-from conf import Q_TOPK, D_TOPK
+from conf import Q_TOPK, D_TOPK, p_num, pos_num, neg_num, padding_neg_num
+import logging
+from torch.distributed import get_world_size
+
+logger = logging.getLogger("__main__")
 
 
 class SequentialDistributedSampler(torch.utils.data.sampler.Sampler):
@@ -57,9 +61,13 @@ class SequentialDistributedSampler(torch.utils.data.sampler.Sampler):
 
 def scheduler_neg(epoch, total_epoch):
     # epoch += 1
+    # return [1, 1, 0]
     min_val = [1, 1, 1]
-    # return min_val
-    max_val = [10, 5, 1]
+    # min_val = [1, 1, -10000]
+    # max_val = [10, 5, -10000]
+    # max_val = [10, 5, 1]
+    max_val = [10, 8, 1]
+    # return softmax([(ma - mi) / (total_epoch - 1) * epoch + mi for ma, mi in zip(max_val, min_val)], T=5)
     return softmax([(ma - mi) / (total_epoch - 1) * epoch + mi for ma, mi in zip(max_val, min_val)], T=5)
     # return [(ma - mi) / (total_epoch - 1) * epoch + mi for ma, mi in zip(max_val, min_val)]
 
@@ -75,6 +83,42 @@ def sample_T_scheduler(epoch, total_epoch):
     min_T, max_T = 1, 20
     # return max_T
     return max_T - (max_T - min_T) / (total_epoch - 1) * epoch
+
+
+def get_epoch_scheduler(epoch, args, eval_p_num=None, is_evaluating=False):
+    if eval_p_num is not None:
+        p_num = eval_p_num
+    pos_weight, hard_neg_weight, neg_weight = scheduler_neg(epoch, args.epoch)
+    if is_evaluating:
+        # pos_weight, hard_neg_weight, neg_weight = scheduler_neg(args.epoch, args.epoch)
+        pos_weight, hard_neg_weight, neg_weight = [0.5, 0.5, 0]
+    neg_weight_mask = torch.zeros((args.batch_size * 4 * args.nranks, args.batch_size * p_num * 4 * args.nranks + padding_neg_num), dtype=torch.float, device="cuda")
+    # logger.info(f"now neg weight={scheduler_neg(epoch, args.epoch)}")
+    # for i in range(args.batch_size * 4):
+    #     # labels[i, i * pn_num:i * pn_num + pos_num] = score[i]
+    #     base_offset = (i // 4) * p_num * 4
+    #     # next_base_offset = (i // 4 + 1) * p_num * 4
+    #     neg_weight_mask[i, base_offset:base_offset + pos_num] = pos_weight
+    #     neg_weight_mask[i, base_offset + pos_num:base_offset + pos_num + neg_num] = hard_neg_weight
+    #     neg_weight_mask[i, 0:base_offset] = neg_weight
+    #     neg_weight_mask[i, base_offset + pos_num + neg_num:] = neg_weight
+    for i in range(args.batch_size * 4):
+        # labels[i, i * pn_num:i * pn_num + pos_num] = score[i]
+        base_offset = (i // 4) * p_num * 4
+        hn_offset = base_offset + pos_num + neg_num
+        neg_offset = base_offset + p_num * 4
+        # next_base_offset = (i // 4 + 1) * p_num * 4
+        neg_weight_mask[i, base_offset:hn_offset] = pos_weight
+        neg_weight_mask[i, hn_offset:neg_offset] = hard_neg_weight
+        neg_weight_mask[i, 0:base_offset] = neg_weight
+        neg_weight_mask[i, neg_offset:] = neg_weight
+    # input(neg_weight_mask)
+
+    sample_T = sample_T_scheduler(epoch, args.epoch)
+    # logger.info(f"now sample_T = {sample_T_scheduler(epoch, args.epoch)}")
+    logger.info(f"now sample_T = {sample_T}")
+    logger.info(f"now neg weight={[pos_weight, hard_neg_weight, neg_weight]}")
+    return neg_weight_mask, sample_T
 
 
 def coef_scheduler(epoch, total_epoch):
@@ -97,28 +141,6 @@ def coef_scheduler(epoch, total_epoch):
 def test_coef_scheduler():
     for i in range(30):
         print(coef_scheduler(i, 30))
-
-
-def pre_activate_coroutine(func):
-    @wraps(func)
-    def primer(*args, **kwargs):
-        gen = func(*args, **kwargs)
-        next(gen)
-        return gen
-
-    return primer
-
-
-@pre_activate_coroutine
-def moving_average():
-    total = 0.0
-    count = 0
-    average = 0
-    while True:
-        term = yield average
-        total += term
-        count += 1
-        average = total / count
 
 
 class MAverage:
@@ -191,6 +213,8 @@ def distributed_concat(tensor, num_total_examples=None, concat=True):
     res = output_tensors
     if concat:
         res = torch.cat(res, dim=0)
+        if num_total_examples:
+            res = res[:num_total_examples]
     # truncate the dummy elements added by SequentialDistributedSampler
     return res
 
@@ -206,6 +230,25 @@ def collection_qd_masks(data):
         output.append(all_t)
 
     return output
+
+
+def create_geo_retriever_score(scores):
+    qn, optnum, dn = scores.size()
+    dn //= optnum
+    output_scores = torch.zeros(qn * optnum, qn * optnum * dn + padding_neg_num)
+    for qi in range(qn):
+        for oi in range(optnum):
+            row = qi * optnum + oi
+            column = qi * optnum * dn
+            output_scores[row, column:column + dn * optnum] = scores[qi, oi]
+    return output_scores
+
+
+def testcreate_geo_retriever_score():
+    a = torch.randn(3, 2, 4)
+    print(a)
+    res = create_geo_retriever_score(a)
+    print(res.numpy())
 
 
 def pre_batch_enable(epoch, epoch_total):
@@ -335,8 +378,10 @@ def qd_answer_mask_to_realinput(Q, D, answer_cls_idx):
 
 if __name__ == '__main__':
     # test_sample_T()
-    # for i in range(10):
-    #     print(scheduler_neg(i, 10))
+    for i in range(20):
+        # print(scheduler_neg(i, 20))
+        print(sample_T_scheduler(i, 20))
 
     # test_coef_scheduler()
-    test_mix_qd()
+    # test_mix_qd()
+    # testcreate_geo_retriever_score()

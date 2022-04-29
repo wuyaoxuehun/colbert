@@ -38,6 +38,7 @@
 #     # attention_mask = attention_mask.tolist()
 #     return input_ids, attention_mask, active_indices, active_padding
 import numpy as np
+import torch
 
 
 def get_real_inputs2(input_ids, word_ids, ignore_word_indices, max_seq_length):
@@ -135,3 +136,30 @@ def get_real_inputs3(input_ids, word_ids, ignore_word_indices, max_seq_length):
     active_indices += [0] * (max_seq_length - len(active_indices))
     # attention_mask = attention_mask.tolist()
     return input_ids, attention_mask, active_indices, active_padding
+
+
+def get_tok_avg_inputs(word_ids, ignore_word_indices, max_span_length):
+    i = 0
+    max_active_len = len([_ for _ in word_ids if _])
+    active_indices = []
+    while i < max_active_len:
+        start = i
+        end = start + 1
+        while end < max_active_len and word_ids[end] == word_ids[start]:
+            end += 1
+        if word_ids[i] not in ignore_word_indices:
+            active_indices.append((start, end))
+        i = end
+
+    active_indices = active_indices[:max_span_length]
+    active_padding = [1] * len(active_indices) + [0] * (max_span_length - len(active_indices))
+    active_indices = active_indices + [(0, 1)] * (max_span_length - len(active_indices))
+    # active_indices += [0] * (max_seq_length - len(active_indices))
+    return active_indices, active_padding
+
+# def span_mean(Q, spans):
+#     output = torch.zeros_like(Q)
+#     for i, t_spans in enumerate(spans):
+#         for j, (s, e) in enumerate(t_spans):
+#             output[i, j, ...] = Q[i, s:e, ...].mean(0)
+#     return output

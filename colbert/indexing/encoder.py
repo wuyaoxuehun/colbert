@@ -1,32 +1,26 @@
-from multiprocessing import Pool
+import itertools
+# from colbert.base_config import segmenter, overwrite_mask_cache
+import os
+import queue
+import threading
+import time
 
 import math
-import os
-import time
+import numpy as np
 import torch
 import ujson
-import numpy as np
-
-import itertools
-import threading
-import queue
-
-from colbert.modeling.inference import ModelInference
+import gc
 from colbert.evaluation.loaders import load_colbert
-from colbert.utils.utils import print_message
-
 from colbert.indexing.index_manager import IndexManager
-from colbert.base_config import segmenter, overwrite_mask_cache
-import os
-import json
+from colbert.modeling.inference import ModelInference
+# from colbert.modeling.tokenization.utils import get_real_inputs
+from colbert.training.training_utils import distributed_concat
+from colbert.utils.utils import print_message
+from conf import corpus_tokenized_prefix
 from colbert.utils.distributed import barrier
-from tqdm import tqdm
-
-from conf import doc_maxlen, pretrain_choose, corpus_tokenized_prefix
-from colbert.modeling.tokenization.utils import get_real_inputs
 
 
-class CollectionEncoder():
+class CollectionEncoder:
     def __init__(self, args, process_idx, num_processes, model=None):
         self.args = args
         self.collection = args.collection
@@ -50,7 +44,8 @@ class CollectionEncoder():
 
         self._load_model(model)
         self.indexmgr = IndexManager(args.dim)
-        self.iterator = self._initialize_iterator()
+        self.iterator = None
+        # self.iterator = self._initialize_iterator()
 
     def pre_tensorize(self, collection):
         collection = list(collection)
@@ -60,7 +55,7 @@ class CollectionEncoder():
         assert len(ids) == len(collection)
         return ids.cpu().tolist(), mask.cpu().tolist(), word_mask.tolist()
 
-    def _initialize_iterator(self, overwrite=False):
+    def _initialize_iterator_(self, overwrite=False):
         # return open(self.collection)
         # collection = iter(list(open(self.collection))[50000:])
         # base_dir, file_name = os.path.split(self.collection)
@@ -70,7 +65,8 @@ class CollectionEncoder():
         # pre_tok_file = file_prefix + '_tokenized_no_word_mask.pt'
         # pre_tok_path = os.path.join(base_dir, pre_tok_file)
         split_num = 12
-        collection = [[], [], []]
+        # collection = [[], [], []]
+        collection = []
         part_len = math.floor(split_num / self.args.nranks)
         start, end = self.args.rank * part_len, (self.args.rank + 1) * part_len
         if (split_num - end) < part_len:
@@ -81,22 +77,37 @@ class CollectionEncoder():
         for i in range(start, end):
             # sub_collection_path = f'{pref}_{i}.pt'
             # input(sub_collection_path)
-            collection_path = corpus_tokenized_prefix + f"{i}.pt"
+            collection_path = corpus_tokenized_prefix + f"_{i}.pt"
+            # input(collection_path)
             # input(collection_path)
             if not os.path.exists(collection_path):
                 break
+
             print_message(f"loading sub collection {collection_path} for rank {self.args.rank}")
             sub_collection = torch.load(collection_path)
-            for j in range(3):
-                collection[j].extend(sub_collection[j])
+            # for j in range(3):
+            #     collection[j].extend(sub_collection[j])
+            collection += sub_collection
 
         # collection = torch.load(pre_tok_path)
         # collection = open(self.collection, encoding='utf8')
         # next(collection)
-        print_message('collection total %d' % (len(collection[0]),))
+        # collection = list(zip(*collection))
+        print_message('collection total %d' % (len(collection),))
         return collection
 
         # return iter(list(zip(*collection))[:1000])
+
+    def _initialize_iterator(self, part):
+        collection_path = corpus_tokenized_prefix + f"_{part}.pt"
+        print_message(f"loading sub collection {collection_path} for rank {self.args.rank}")
+        collection = torch.load(collection_path)
+        collection = collection[:len(collection) // 1]
+        sub_collection_num = math.ceil(len(collection) // self.args.nranks)
+        sub_collection = collection[sub_collection_num * self.args.rank:sub_collection_num * (self.args.rank + 1)]
+        print_message('collection total %d' % (len(sub_collection),))
+        # self.part_len = len(collection)
+        return sub_collection
 
     def _saver_thread(self):
         for args in iter(self.saver_queue.get, None):
@@ -114,59 +125,41 @@ class CollectionEncoder():
 
         self.colbert.eval()
 
-        self.inference = ModelInference(self.colbert, amp=self.args.amp, segmenter=segmenter, query_maxlen=self.args.query_maxlen, doc_maxlen=self.args.doc_maxlen)
-
-    def encode(self):
-        self.saver_queue = queue.Queue(maxsize=3)
-        thread = threading.Thread(target=self._saver_thread)
-        thread.start()
-
-        t0 = time.time()
-        local_docs_processed = 0
-
-        for batch_idx, (offset, lines, owner) in enumerate(self._batch_passages(self.iterator)):
-            if owner != self.process_idx:
-                continue
-
-            t1 = time.time()
-            # batch = self._preprocess_batch(offset, lines)
-
-            embs, doclens = self._encode_batch(batch_idx, lines)
-
-            t2 = time.time()
-            self.saver_queue.put((batch_idx, embs, offset, doclens))
-
-            t3 = time.time()
-            local_docs_processed += len(lines)
-            overall_throughput = compute_throughput(local_docs_processed, t0, t3)
-            this_encoding_throughput = compute_throughput(len(lines), t1, t2)
-            this_saving_throughput = compute_throughput(len(lines), t2, t3)
-
-            self.print(f'#> Completed batch #{batch_idx} (starting at passage #{offset}) \t\t'
-                       f'Passages/min: {overall_throughput} (overall), ',
-                       f'{this_encoding_throughput} (this encoding), ',
-                       f'{this_saving_throughput} (this saving)')
-        self.saver_queue.put(None)
-
-        self.print("#> Joining saver thread.")
-        thread.join()
+        self.inference = ModelInference(self.colbert, amp=self.args.amp, segmenter=None, query_maxlen=self.args.query_maxlen, doc_maxlen=self.args.doc_maxlen)
 
     def encode_simple(self):
-        embs, doclens = self._encode_batch(self.iterator)
-        if not os.path.exists(self.args.index_path):
-            os.makedirs(self.args.index_path)
-        encode_idx = self.args.rank
-        output_path = os.path.join(self.args.index_path, "{}.pt".format(encode_idx))
-        output_sample_path = os.path.join(self.args.index_path, "{}.sample".format(encode_idx))
-        doclens_path = os.path.join(self.args.index_path, 'doclens.{}.json'.format(encode_idx))
+        for i in range(2, 10):
+            barrier(self.args.rank)
+            self.iterator = self._initialize_iterator(part=i)
+            embs, doclens = self._encode_batch(self.iterator)
+            # embs = distributed_concat(embs, concat=True, num_total_examples=self.part_len)
+            torch.save(embs, f"/home2/awu/testcb/data/dureader/temp/{self.args.rank}.pt")
+            barrier(self.args.rank)
+            if self.args.rank == 0:
+                all_embs = []
+                for j in range(self.args.nranks):
+                    all_embs.append(torch.load(f"/home2/awu/testcb/data/dureader/temp/{j}.pt"))
+                embs = torch.cat(all_embs, dim=0)
+                if not os.path.exists(self.args.index_path):
+                    os.makedirs(self.args.index_path)
+                # encode_idx = self.args.rank
+                encode_idx = i
+                output_path = os.path.join(self.args.index_path, "{}.pt".format(encode_idx))
+                output_sample_path = os.path.join(self.args.index_path, "{}.sample".format(encode_idx))
+                doclens_path = os.path.join(self.args.index_path, 'doclens.{}.json'.format(encode_idx))
 
-        # Save the embeddings.
-        self.indexmgr.save(embs, output_path)
-        self.indexmgr.save(embs[torch.randint(0, high=embs.size(0), size=(embs.size(0) // 20,))], output_sample_path)
-
-        # Save the doclens.
-        with open(doclens_path, 'w') as output_doclens:
-            ujson.dump(doclens, output_doclens)
+                # Save the embeddings.
+                self.indexmgr.save(embs, output_path)
+                self.indexmgr.save(embs[torch.randint(0, high=embs.size(0), size=(embs.size(0) // 20,))], output_sample_path)
+                print_message(f"saved {output_path}")
+                # Save the doclens.
+                with open(doclens_path, 'w') as output_doclens:
+                    ujson.dump(doclens, output_doclens)
+            del self.iterator
+            del embs
+            del doclens
+            gc.collect()
+            barrier(self.args.rank)
 
         metadata_path = os.path.join(self.args.index_path, 'metadata.json')
         print_message("Saving (the following) metadata to", metadata_path, "..")
@@ -221,13 +214,13 @@ class CollectionEncoder():
 
     def _encode_batch(self, batch):
         with torch.no_grad():
-            import math
+            # import math
             # rank_data_len = math.ceil(len(batch) / self.args.nranks)
             # start, end = self.args.rank * rank_data_len, (self.args.rank + 1) * rank_data_len
             # print(f'local embs num = {len(d_ids)}')
             # d_word_mask[:, 1:] = 0
             # from colbert.modeling.tokenization.utils import get_real_inputs
-            batch = list(zip(*batch))
+            # batch = list(zip(*batch))
             # real_inputs = []
             # print('getting real inputs')
             # for t in tqdm(batch):

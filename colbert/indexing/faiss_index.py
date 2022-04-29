@@ -37,8 +37,10 @@ class FaissIndex():
             self.gpu.training_initialize(self.index, self.quantizer)
 
         s = time.time()
+        print('getting train')
         self.index.train(train_data)
         print(time.time() - s)
+        print('training last')
 
         if self.gpu.ngpu > 0:
             self.gpu.training_finalize()

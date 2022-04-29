@@ -1,6 +1,7 @@
 import torch
 
 from colbert.utils.utils import NullContextManager
+from conf import *
 
 
 # PyTorch_over_1_6 = float('.'.join(torch.__version__.split('.')[0:2])) >= 1.6
@@ -17,8 +18,9 @@ class MixedPrecisionManager:
             self.scaler = torch.cuda.amp.GradScaler()
 
     def context(self):
-        # return torch.cuda.amp.autocast() if self.activated else NullContextManager()
-        return torch.autocast(dtype=torch.bfloat16, device_type="cuda") if self.activated else NullContextManager()
+        # if pretrain_choose.find('t5') == -1:
+        return torch.cuda.amp.autocast() if self.activated else NullContextManager()
+        # return torch.autocast(dtype=torch.bfloat16, device_type="cuda") if self.activated else NullContextManager()
 
     def backward(self, loss):
         if self.activated:

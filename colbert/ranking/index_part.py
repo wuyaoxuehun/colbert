@@ -12,7 +12,7 @@ from colbert.ranking.index_ranker import IndexRanker
 
 
 class IndexPart():
-    def __init__(self, directory, dim=128, part_range=None, verbose=True):
+    def __init__(self, directory, dim=128, part_range=None, verbose=True, model=None):
         first_part, last_part = (0, None) if part_range is None else (part_range.start, part_range.stop)
 
         # Load parts metadata
@@ -32,7 +32,7 @@ class IndexPart():
         self.num_embeddings = sum(self.doclens)
 
         self.tensor = self._load_parts(dim, verbose)
-        self.ranker = IndexRanker(self.tensor, self.doclens)
+        self.ranker = IndexRanker(self.tensor, self.doclens, model)
 
     def _load_parts(self, dim, verbose):
         tensor = torch.zeros(self.num_embeddings + 512, dim, dtype=torch.float16)

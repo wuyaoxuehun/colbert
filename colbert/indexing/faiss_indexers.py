@@ -8,8 +8,10 @@
 """
  FAISS-based index components for dense retriever
 """
-from functools import partial
-
+import time
+from collections import defaultdict
+from functools import partial, lru_cache
+import torch.nn.functional as F
 import faiss
 import logging
 import numpy as np
@@ -21,13 +23,15 @@ from typing import List, Tuple
 import torch
 from tqdm import tqdm
 
-from colbert.utils.utils import print_message
-from colbert.indexing.loaders import get_parts
-from colbert.indexing.index_manager import load_index_part
-from conf import dim
-from colbert.ranking.faiss_index import FaissIndex
+# from colbert.utils.utils import print_message
+# from colbert.indexing.loaders import get_parts
+# from colbert.indexing.index_manager import load_index_part
+from conf import dim, index_config, corpus_tokenized_prefix, pretrain, corpus_index_term_path, use_prf
 from colbert.ranking.index_part import IndexPart
-from colbert.indexing.myfaiss import prepare_faiss_index
+from colbert.indexing.myfaiss import *
+from colbert.ranking.faiss_index import *
+from colbert.modeling.tokenization import CostomTokenizer
+from colbert.modeling.model_utils import batch_index_select
 
 logger = logging.getLogger()
 
@@ -152,19 +156,24 @@ class DenseFaissRetriever:
     def search(self, query, topk_doc=None):
         raise NotImplementedError
 
-    def get_corpus_vectors(self, encoded_corpus_path):
+    def get_corpus_vectors(self, encoded_corpus_path, l2norm=True):
         print_message("#> Starting..")
         parts, parts_paths, samples_paths = get_parts(encoded_corpus_path)
         slice_parts_paths = parts_paths
         sub_collection = [load_index_part(filename) for filename in slice_parts_paths if filename is not None]
-        sub_collection = torch.cat(sub_collection)
+        sub_collection = torch.cat(sub_collection).to(torch.float32)
+        if l2norm:
+            sub_collection = F.normalize(sub_collection, p=2, dim=-1)
         sub_collection = sub_collection.float().cpu().numpy()
         print_message("#> Processing a sub_collection with shape", sub_collection.shape)
         return sub_collection
 
 
+from colbert.indexing.kmeans import kmeans
+
+
 class ColbertRetriever(DenseFaissRetriever):
-    def __init__(self, index_path=None, dim=None, rank=None, index_config=None, partitions=None, sample=None):
+    def __init__(self, index_path=None, dim=None, rank=None, index_config=None, partitions=None, sample=None, model=None):
         super().__init__(index_path, dim, rank)
         self.index_config = index_config
         self.faiss_index = None
@@ -172,7 +181,11 @@ class ColbertRetriever(DenseFaissRetriever):
         self.index = None
         self.partitions = partitions
         self.rank = rank
+        self.model = model
+        if index_config is not None:
+            self.faiss_depth = self.index_config['faiss_depth']
         self.sample = sample
+        # self.index_term_manager = IndexTermManager()
 
     def load_index(self):
         index_config = self.index_config
@@ -181,7 +194,7 @@ class ColbertRetriever(DenseFaissRetriever):
         self.faiss_index = FaissIndex(index_config['index_path'], index_config['faiss_index_path'],
                                       index_config['n_probe'], part_range=index_config['part_range'], rank=self.rank)
         self.retrieve = partial(self.faiss_index.retrieve, self.index_config['faiss_depth'])
-        self.index = IndexPart(index_config['index_path'], dim=index_config['dim'], part_range=index_config['part_range'], verbose=True)
+        self.index = IndexPart(index_config['index_path'], dim=index_config['dim'], part_range=index_config['part_range'], verbose=True, model=self.model)
 
     def set_faiss_depth_nprobe(self, faiss_depth=None, nprobe=None):
         if faiss_depth is not None:
@@ -202,16 +215,230 @@ class ColbertRetriever(DenseFaissRetriever):
         print_message(f"#> writing to {output_path}.")
         colbert_faiss_index.save(output_path)
 
-    def search(self, query, topk_doc=None):
-        Q, q_word_mask = query
+    def search(self, query, topk_doc=None, filter_topk=None, **kwargs):
+        Q = query
         assert len(Q.size()) == 2
-        pids = self.retrieve(Q.unsqueeze(0), verbose=False)[0]
+
+        # softmax_word_weight = Q.norm(p=2, dim=-1)
+        # print(softmax_word_weight)
+        # input()
+        # t = softmax_word_weight.sort(-1, descending=True)
+        # sorted_ww = t.indices
+        # ww = t.values
+        # total = q_active_padding.sum(-1)
+        # Q_new = Q[sorted_ww[:filter_topk]]
+        t1 = time.time()
+        search_Q = F.normalize(Q.to(torch.float32), p=2, dim=-1)
+        # print(search_Q.norm(p=2, dim=-1))
+        # input()
+        # search_Q = F.normalize(Q_new.to(torch.float32), p=2, dim=-1)
+        pids = self.retrieve(search_Q.unsqueeze(0), verbose=False)[0]
+        t2 = time.time()
+        # print(len(pids), Q.size())
+        # input()
         # input(len(pids))
-        weighted_q = Q * q_word_mask[:, None]
-        Q = weighted_q.unsqueeze(0)
+        # weighted_q = Q * q_word_mask[:, None]
+        # Q = weighted_q.unsqueeze(0)
+        Q = Q.unsqueeze(0)
         Q = Q.permute(0, 2, 1)
         pids = self.index.ranker.rank_forward(Q, pids, depth=topk_doc)
+        t3 = time.time()
+        # print(t3-t2, t2-t1)
+        # input()
         return pids
+
+    def search_(self, query, topk_doc=None, expand_size=10, expand_center_size=24, expand_per_emb=16, expand_topk_emb=3, expand_weight=0.5):
+        Q, q_word_mask = query
+        assert len(Q.size()) == 2
+        search_Q = F.normalize(Q.to(torch.float32), p=2, dim=-1)
+        pids, embedding_ids, scores = self.retrieve(search_Q.unsqueeze(0), verbose=False, output_embedding_ids=True)
+        pids = pids[0]
+        # input(scores)
+        # input(scores.size())
+        # print(len(pids), embedding_ids.size())
+        # embedding_ids = embedding_ids.view(Q.size(0), self.faiss_depth)
+        # scores = scores.view(Q.size(0), self.faiss_depth)
+        # embeddings = self.index.tensor[embedding_ids]
+        # # print(embeddings.size())
+        # embeddings = embeddings[:, :expand_topk_emb, ...].cuda().view(-1, Q.size(-1)).contiguous()
+        # scores = scores[:, :expand_topk_emb, ...].cuda().view(-1).contiguous()
+        # # input(scores)
+        # selected_embs = scores > 0.8
+        # if int(sum(selected_embs)) > expand_size and False:
+        #     embeddings = embeddings[selected_embs]
+        #     # print(embeddings.size())
+        #     # from kmeans_pytorch import kmeans
+        #     from colbert.indexing.kmeans import kmeans
+        #     cluster_ids_x, cluster_centers = kmeans(
+        #         X=embeddings, num_clusters=expand_size, distance='euclidean', device="cuda"
+        #     )
+        #     # print(cluster_centers.size())
+        #     cluster_centers = cluster_centers.to(Q.device)
+        #     Q = torch.cat([Q, cluster_centers], dim=0)
+
+        # input(len(pids))
+        # weighted_q = Q * q_word_mask[:, None]
+        # weighted_q = Q
+        # Q = weighted_q.unsqueeze(0)
+        # Q = Q.permute(0, 2, 1)
+        pids, output_D, output_D_mask = self.index.ranker.rank_forward(Q.unsqueeze(0).permute(0, 2, 1), pids, depth=topk_doc, output_D_embedding=True)
+        if not use_prf:
+            return pids, [], []
+
+        output_D, output_D_mask = output_D[:expand_topk_emb, ...], output_D_mask[:expand_topk_emb, ...]
+        output_D, output_D_mask = output_D.view(-1, output_D.size(-1)), output_D_mask.view(-1)
+
+        embeddings = output_D[output_D_mask.bool()]
+        # from kmeans_pytorch import kmeans
+        cluster_ids_x, cluster_centers = kmeans(
+            X=embeddings, num_clusters=expand_center_size, device="cuda"
+        )
+        # from sklearn.cluster import KMeans
+        # kmeans = KMeans(n_clusters=expand_center_size, random_state=0).fit(embeddings.cpu().numpy())
+        # cluster_centers = torch.from_numpy(kmeans.cluster_centers_)
+
+        # _, embedding_ids, _ = self.retrieve(cluster_centers.unsqueeze(0), verbose=False, output_embedding_ids=True)
+        cluster_centers = F.normalize(cluster_centers, p=2, dim=-1)
+
+        _, embedding_ids, _ = self.faiss_index.retrieve(expand_per_emb, cluster_centers.unsqueeze(0), verbose=False, output_embedding_ids=True)
+        sigmas = []
+        stemid_chooses = []
+        # input(embedding_ids.shape)
+        for embids in embedding_ids:
+            try:
+                stemids = [self.index_term_manager.embid2stemid[embid] for embid in embids]
+                u, indices = np.unique(stemids, return_inverse=True)
+                stemid_choose = u[np.argmax(np.bincount(indices))]
+            except Exception as e:
+                print(e)
+                print(embids, embedding_ids.shape, cluster_centers.shape, embeddings.shape)
+                exit()
+            df = self.index_term_manager.stemid2df[stemid_choose]
+            stemid_chooses.append(stemid_choose)
+            sigma = np.log((self.index_term_manager.doc_num + 1) / (df + 1))
+            sigmas.append(sigma)
+            # print([self.index_term_manager.id2stem[stemid] for stemid in stemids])
+            # print(self.index_term_manager.id2stem[stemid_choose])
+            # print(df, sigma)
+            # input()
+
+        sigmas = torch.tensor(sigmas)
+        sigmas_choose_idx = sigmas.argsort(descending=True)[:expand_size]
+        choose_stems = sorted([(self.index_term_manager.id2stem[stemid], float(sigmas[idx]))
+                               for idx, stemid in enumerate(stemid_chooses)], key=lambda x: x[1], reverse=True)
+        expand_stems = [self.index_term_manager.id2stem[stemid_choose]
+                        for idx, stemid_choose in enumerate(stemid_chooses) if idx in sigmas_choose_idx]
+        # print("choose stems: ", choose_stems)
+        # print("expand stems: ", expand_stems)
+        sigmas = sigmas[sigmas_choose_idx]
+        cluster_centers = cluster_centers[sigmas_choose_idx]
+
+        # print(cluster_centers.size())
+        # cluster_centers = cluster_centers.to(Q.device) * sigmas.to(Q.device)[:, None] * expand_weight
+        cluster_centers = cluster_centers.to(Q.device) * expand_weight
+
+        Q = torch.cat([Q, cluster_centers], dim=0)
+
+        pids, output_D, output_D_mask = self.index.ranker.rank_forward(Q.unsqueeze(0).permute(0, 2, 1), pids, depth=topk_doc, output_D_embedding=True)
+        # print(output_D.size())
+        return pids, choose_stems, expand_stems
+
+
+def load_pretensorize(start, end):
+    collection = []
+    for i in tqdm(range(start, end)):
+        collection_path = corpus_tokenized_prefix + f"_{i}.pt"
+        if not os.path.exists(collection_path):
+            break
+        sub_collection = torch.load(collection_path)
+        collection += sub_collection
+    return collection
+
+
+class IndexTermManager:
+    def __init__(self):
+
+        # self.span2stemid = lambda x: '#'.join([str(_) for _ in x])
+        self.stem2id = {}
+        self.id2stem = {}
+        self.stemid2df = defaultdict(int)
+        self.stemid2cf = defaultdict(int)
+        self.embid2stemid = []
+        # self.stem_cache = {}
+        self.span_cache = {}
+        self.tokenzier = CostomTokenizer.from_pretrained(pretrain)
+
+        from nltk.stem import PorterStemmer
+        self.stemmer = PorterStemmer()
+        if not os.path.exists(corpus_index_term_path) or False:
+            self.parse()
+            torch.save([self.stem2id, self.id2stem, self.stemid2df, self.stemid2cf, self.embid2stemid], corpus_index_term_path)
+        else:
+            self.stem2id, self.id2stem, self.stemid2df, self.stemid2cf, self.embid2stemid = torch.load(corpus_index_term_path)
+
+    @property
+    def doc_num(self):
+        return 756674
+
+    def embid2df(self, embid):
+        return self.stemid2df[self.embid2stemid[embid]]
+
+    def embid2cf(self, embid):
+        return self.stemid2cf[self.embid2stemid[embid]]
+
+    def embid2term(self, embid):
+        return self.id2stem[self.embid2stemid[embid]]
+
+    @lru_cache(maxsize=None)
+    def get_stem(self, word):
+        return self.stemmer.stem(word, to_lowercase=True)
+
+    # @lru_cache(maxsize=None)
+    def get_stem_by_span(self, span):
+        key = '#'.join([str(_) for _ in span])
+        if key not in self.span_cache:
+            self.span_cache[key] = self.get_stem(self.tokenzier.decode(span))
+        return self.span_cache[key]
+
+    def parse(self):
+        corpus = load_pretensorize(0, 12)
+
+        input_ids, attention_mask, active_indices, active_padding = list(zip(*corpus))
+        cur_stem_id = 0
+
+        for ids, spans, pading in tqdm(zip(input_ids, active_indices, active_padding), total=len(input_ids)):
+            doc_stem_ids = []
+            for i in range(sum(pading)):
+                start, end = spans[i]
+                # word = tokenzier.decode(ids[start:end])
+                # input(word)
+                # stem = self.get_stem(word)
+                stem = self.get_stem_by_span(ids[start:end])
+                if stem not in self.stem2id:
+                    self.stem2id[stem] = cur_stem_id
+                    self.id2stem[cur_stem_id] = stem
+                    cur_stem_id += 1
+                stem_id = self.stem2id[stem]
+                doc_stem_ids.append(stem_id)
+                self.stemid2cf[stem_id] += 1
+
+            for stem_id in set(doc_stem_ids):
+                self.stemid2df[stem_id] += 1
+            self.embid2stemid += doc_stem_ids
+
+
+def test_colbert_indexer():
+    index_path = "/home/awu/experiments/geo/others/testcb/index/webq/webq_colbert_t5_seqlen_emb/"
+    index_config['index_path'] = index_path
+    index_config['faiss_index_path'] = index_path + "ivfpq.2000.faiss"
+    # from line_profiler import LineProfiler
+    # lp = LineProfiler()
+    # lp_wrapper = lp(ColbertRetriever)
+    retriever = ColbertRetriever(index_path=index_config['index_path'], rank=0, index_config=index_config)
+    retriever.load_index()
+    query = [torch.randn(2, 128).cuda(), torch.ones(2).cuda()]
+    query[0] = F.normalize(query[0], p=2, dim=-1)
+    retriever.search(query, topk_doc=4)
 
 
 class DPRRetriever(DenseFaissRetriever):
@@ -382,5 +609,14 @@ def test_indexer():
         print(res)
 
 
+def test_term_manager():
+    index_term_manager = IndexTermManager()
+    # index_term_manager.parse()
+    for i in range(200):
+        print(index_term_manager.embid2term(i), index_term_manager.embid2cf(i), index_term_manager.embid2df(i))
+
+
 if __name__ == '__main__':
-    test_indexer()
+    # test_indexer()
+    test_colbert_indexer()
+    # test_term_manager()

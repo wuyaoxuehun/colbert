@@ -1,8 +1,7 @@
 import torch
 
 from colbert.modeling.tokenization.utils import _split_into_batches, _split_into_batches_bundle, CostomTokenizer
-from colbert import base_config
-from conf import answer_max_seqlen, Q_marker_token, pretrain
+from conf import Q_marker_token, pretrain
 
 
 class QueryTokenizer:
@@ -67,7 +66,7 @@ class QueryTokenizer:
         # obj = self.tok(batch_text, padding='max_length', truncation=True,
         #                return_tensors='pt', max_length=self.query_maxlen)
         # obj = self.tok.tokenize_q_dict(batch_text, self.segmenter, self.query_maxlen)
-        obj = self.tok.tokenize_q_noopt_segmented_dict(batch_text, self.query_maxlen, answer_max_seq_length=answer_max_seqlen)
+        obj = self.tok.tokenize_q_noopt_segmented_dict(batch_text, self.query_maxlen)
         # ids, mask = obj['input_ids'], obj['attention_mask']
         # ids, mask, word_mask, tokens = obj[0]
         # answer_ids, ans_mask, answer_word_mask, answer_tokens = obj[1]

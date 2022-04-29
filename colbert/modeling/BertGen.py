@@ -1,4 +1,6 @@
+import os
 import string
+from time import time
 
 import numpy as np
 # import cupy as np
@@ -385,7 +387,9 @@ def test_decoder_prefix():
 
     print(tokenizer.batch_decode(output_sequences, skip_special_tokens=True))
 
-from colbert.modeling.cpy.hello_world import get_real_inputs2
+
+from colbert.modeling.cpy.hello_world import get_real_inputs2, span_mean
+
 
 def test_tok_word_map_():
     s = "welcome to new york for youra temasd visit abcdff" * 6
@@ -690,6 +694,67 @@ def profile_attention_mask():
     lp.print_stats(sys.stdout)  # 打印出性能分析结果
 
 
+def test_span():
+    os.environ["CUDA_VISIBLE_DEVICES"] = "4"
+    Q = torch.randn((2, 4, 3))
+    spans = torch.tensor([[[0, 1], [2, 4]]] * 2)
+
+    def test_span1(Q, spans):
+        output = torch.zeros([Q.size(0), spans.size(1), Q.size(2)], device=Q.device)
+        for i, t_spans in enumerate(spans):
+            for j, (s, e) in enumerate(t_spans):
+                output[i, j, ...] = Q[i, s:e, ...].mean(0)
+        return output
+
+    from colbert.modeling.model_utils import batch_index_select
+
+    # print(Q)
+    # print(spans)
+    # print(output)
+    def span_mean1(Q, spans):
+        presum_q = Q.cumsum(1)
+        presum_q = torch.cat([torch.zeros([Q.size(0), 1, Q.size(2)], device=Q.device), presum_q], dim=1)
+        start_idx, end_idx = spans[:, :, 0], spans[:, :, 1]
+        # print(presum_q.size(), start_idx.size(), end_idx.size())
+        start_q, end_q = [batch_index_select(presum_q, 1, _) for _ in [start_idx, end_idx]]
+        res_q = end_q - start_q
+        span_len = end_idx = start_idx
+        span_len[span_len == 0] = 1
+        res_q = res_q / (end_idx - start_idx)[:, :, None]
+        return res_q
+
+    # for method in [span_mean1, test_span1]:
+    #     t1 = time()
+    #     for i in tqdm(range(1)):
+    #
+    #         method(Q, spans)
+    #         # t2 = span_mean1(Q, spans)
+    #     print(time() - t1)
+
+    bs = 88
+    span_num = 80
+    Q = torch.randn((bs, 180, 768)).cuda()
+    # spans = torch.tensor([[[0, 1], [2, 4]]] * 2).cuda()
+    start = torch.randint(0, 180, (bs, span_num, 1))
+    end = torch.randint(0, 6, (bs, span_num, 1))
+    spans = torch.cat([start, (start + end).clamp(0, 180)], dim=-1).cuda()
+    for i in range(2):
+        for method in [span_mean1, span_mean]:
+            t1 = time()
+            for i in tqdm(range(2300)):
+                # Q = torch.randn((88, 180, 768)).cuda()
+                # spans = torch.tensor([[[0, 1], [2, 4]]] * 2).cuda()
+                method(Q, spans)
+                # t2 = span_mean1(Q, spans)
+            print(time() - t1)
+        # print(Q)
+        # print(spans)
+        # print(t1)
+        # print(t2)
+        # print(t2 - t1)
+        # print(torch.allclose(t1, t2))
+
+
 if __name__ == '__main__':
     # test_encoder_decoder()
     # test_mask()
@@ -703,4 +768,5 @@ if __name__ == '__main__':
     # train_decoder_prefix()
     # test_decoder_prefix()
     # test_tok_word_map_()
-    profile_attention_mask()
+    # profile_attention_mask()
+    test_span()

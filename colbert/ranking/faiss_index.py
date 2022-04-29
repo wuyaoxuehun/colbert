@@ -5,7 +5,7 @@ import random
 import torch
 
 from multiprocessing import Pool
-from colbert.modeling.inference import ModelInference
+# from colbert.modeling.inference import ModelInference
 
 from colbert.utils.utils import print_message, flatten, batch
 from colbert.indexing.loaders import load_doclens
@@ -65,12 +65,14 @@ class FaissIndex():
 
         self.parallel_pool = Pool(16)
 
-    def retrieve(self, faiss_depth, Q, verbose=False):
-        embedding_ids = self.queries_to_embedding_ids(faiss_depth, Q, verbose=verbose)
-        pids = self.embedding_ids_to_pids(embedding_ids, verbose=verbose)
+    def retrieve(self, faiss_depth, Q, verbose=False, output_embedding_ids=False):
+        embedding_ids, all_scores = self.queries_to_embedding_ids(faiss_depth, Q, verbose=verbose)
+        pids = self.embedding_ids_to_pids(embedding_ids.view(Q.size(0), Q.size(1) * embedding_ids.size(1)), verbose=verbose)
 
         if self.relative_range is not None:
             pids = [[pid for pid in pids_ if pid in self.relative_range] for pids_ in pids]
+        if output_embedding_ids:
+            return pids, embedding_ids, all_scores
 
         return pids
 
@@ -85,6 +87,7 @@ class FaissIndex():
                       condition=verbose)
 
         embeddings_ids = []
+        all_scores = []
         faiss_bsize = embeddings_per_query * 5000
         for offset in range(0, Q_faiss.size(0), faiss_bsize):
             endpos = min(offset + faiss_bsize, Q_faiss.size(0))
@@ -92,15 +95,16 @@ class FaissIndex():
             print_message("#> Searching from {} to {}...".format(offset, endpos), condition=verbose)
 
             some_Q_faiss = Q_faiss[offset:endpos].float().numpy()
-            _, some_embedding_ids = self.faiss_index.search(some_Q_faiss, faiss_depth)
+            scores, some_embedding_ids = self.faiss_index.search(some_Q_faiss, faiss_depth)
+
             embeddings_ids.append(torch.from_numpy(some_embedding_ids))
+            all_scores.append(torch.from_numpy(scores))
 
         embedding_ids = torch.cat(embeddings_ids)
+        all_scores = torch.cat(all_scores)
 
         # Reshape to (number of queries, non-unique embedding IDs per query)
-        embedding_ids = embedding_ids.view(num_queries, embeddings_per_query * embedding_ids.size(1))
-
-        return embedding_ids
+        return embedding_ids, all_scores
 
     def embedding_ids_to_pids(self, embedding_ids, verbose=True):
         # Find unique PIDs per query.

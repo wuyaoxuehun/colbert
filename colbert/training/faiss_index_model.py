@@ -14,10 +14,11 @@ logger = logging.getLogger("__main__")
 
 
 def get_best_partitons(num_embeddings):
-    partitions = 1 << math.ceil(math.log2(8 * math.sqrt(num_embeddings)))
+    # partitions = 1 << math.ceil(math.log2(8 * math.sqrt(num_embeddings)))
+    partitions = 1 << round(math.log2(8 * math.sqrt(num_embeddings)))
     print('\n\n')
-    logger.info("You did not specify --partitions!")
-    logger.info(f'''Default computation chooses {partitions} partitions (for {num_embeddings} embeddings)''')
+    print("You did not specify --partitions!")
+    print(f'''Default computation chooses {partitions} partitions (for {num_embeddings} embeddings)''')
     print('\n\n')
     return partitions
 
@@ -37,6 +38,7 @@ def faiss_index_by_encoded(args):
         from colbert.indexing.faiss_indexers import ColbertRetriever
         retriever = ColbertRetriever(index_path=args.index_path, dim=dim, rank=None, index_config=None, partitions=args.partitions, sample=args.sample)
         retriever.encode_corpus(encoded_corpus_path=args.index_path)
+
 
 if __name__ == '__main__':
     parser = Arguments(description='Faiss indexing for end-to-end retrieval with ColBERT.')

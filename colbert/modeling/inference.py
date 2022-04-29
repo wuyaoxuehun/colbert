@@ -12,17 +12,22 @@ from tqdm import tqdm
 from colbert.training.training_utils import Q_TOPK, D_TOPK, qd_mask_to_realinput
 
 from colbert.modeling.cpy.hello_world import get_real_inputs2, get_real_inputs3
-from conf import doc_maxlen
+from conf import doc_maxlen, doc_word_weight
+from colbert.modeling.model_utils import to_real_input_all
+
+# def to_real_input(t):
+#     return get_real_inputs2(*t, max_seq_length=doc_maxlen)
+
+# def to_real_input(t):
+#     return t
 
 
-def to_real_input(t):
-    return get_real_inputs2(*t, max_seq_length=doc_maxlen)
+# def to_real_input_all(t):
+#     real_inputs = [to_real_input(_) for _ in t]
+#     t = list(zip(*real_inputs))
+#     t[1] = np.array(t[1])
+#     return [torch.tensor(_) for _ in t]
 
-def to_real_input_all(t):
-    real_inputs = [to_real_input(_) for _ in t]
-    t = list(zip(*real_inputs))
-    t[1] = np.array(t[1])
-    return [torch.tensor(_) for _ in t]
 
 class ModelInference():
     def __init__(self, colbert, segmenter, amp=False, query_maxlen=None, doc_maxlen=None):
@@ -101,7 +106,8 @@ class ModelInference():
                 input_ids, attention_mask, active_indices, active_padding = to_real_input_all(t)
 
                 d_word_mask = active_padding
-                batches = self.doc(input_ids.to(DEVICE), attention_mask.to(DEVICE), active_indices.to(DEVICE), to_cpu=to_cpu, output_word_weight=output_word_weight)
+                batches = self.doc(input_ids.to(DEVICE), attention_mask.to(DEVICE), active_indices.to(DEVICE), to_cpu=to_cpu, output_word_weight=output_word_weight,
+                                   with_word_weight=doc_word_weight)
                 D_word_weight = None
                 if output_word_weight:
                     batches, D_word_weight = batches

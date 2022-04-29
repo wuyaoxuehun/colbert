@@ -1,12 +1,6 @@
-import os
-import time
-import myfaiss
-import random
 import torch
-import itertools
 
 from colbert.utils.runs import Run
-from multiprocessing import Pool
 from colbert.modeling.inference import ModelInference
 from colbert.evaluation.ranking_logger import RankingLogger
 
@@ -14,7 +8,7 @@ from colbert.utils.utils import print_message, batch
 from colbert.ranking.rankers import Ranker
 from tqdm import tqdm
 from colbert.base_config import segmenter
-from file_utils import dump_json
+from awutils.file_utils import dump_json
 
 all_paras = {}
 

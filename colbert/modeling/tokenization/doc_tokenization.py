@@ -1,7 +1,7 @@
 import torch
 
 from colbert.modeling.tokenization.utils import _split_into_batches,_split_into_batches_bundle, CostomTokenizer
-from colbert import base_config
+# from colbert import base_config
 from conf import D_marker_token, pretrain
 
 
