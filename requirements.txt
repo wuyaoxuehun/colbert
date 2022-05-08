@@ -1,0 +1,9 @@
+mlflow==1.17.0
+tensorboard==2.4.0
+tensorboard-plugin-wit==1.7.0
+tqdm==4.49.0
+transformers==4.2.2
+ujson==4.0.2
+zhon==1.1.5
+faiss-gpu==1.6.3
+transformers

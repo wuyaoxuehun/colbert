@@ -227,7 +227,7 @@ def test_entropy():
     word_weight = torch.tensor([[1, 2, 3, 1, 2, 3, 1, 2.]])
     word_weight[active_padding == 0] = -1e4
     if True:
-        scale_factor = torch.log(active_padding.sum(-1)) / math.log(256)   / math.sqrt(dim)
+        scale_factor = torch.log(active_padding.sum(-1)) / math.log(256) / math.sqrt(dim)
         # print(word_weight[0])
         word_weight = word_weight * scale_factor[:, None]
         print(scale_factor)
@@ -242,10 +242,21 @@ def test_entropy():
     print(scores)
 
 
+def testhftrainer():
+    from transformers import HfArgumentParser, TrainingArguments, trainer
+    from proj_conf.training_arguments import MyTraniningArgs
+    import sys
+    sys.argv = ["program.py", "--output_dir=abc/def", "--learning_rate=1e-5"]
+    parser = HfArgumentParser((MyTraniningArgs,))
+    training_args, *_ = parser.parse_args_into_dataclasses()
+    print(training_args)
+
+
 if __name__ == '__main__':
     # test_optimzer()
     # test_tokenizer()
     # testimdb()
     # testspanmax()
     # test_acl()
-    test_entropy()
+    # test_entropy()
+    testhftrainer()

@@ -5,7 +5,7 @@ gpu='6,7'
 #gpu='2,3,4'
 #gpu='0,1,2'
 #gpu='2,3,4'
-gpu='1,2'
+gpu='0,1,2,4'
 #index_gpu="1,2,3,4"
 server_gpu="1"
 #gpu='2'
@@ -90,7 +90,7 @@ faiss_index_model(){
     --collection $corpus_path \
     --checkpoint $output_dir \
     --index_path $index_path \
-    --sample 0.1
+    --sample 0.05
 #    --partitions 2000
 }
 

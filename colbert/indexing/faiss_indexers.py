@@ -29,7 +29,7 @@ from tqdm import tqdm
 from conf import dim, index_config, corpus_tokenized_prefix, pretrain, corpus_index_term_path, use_prf
 from colbert.ranking.index_part import IndexPart
 from colbert.indexing.myfaiss import *
-from colbert.ranking.faiss_index import *
+from colbert.ranking.faiss_index import FaissIndex as RankingFaissIndex
 from colbert.modeling.tokenization import CostomTokenizer
 from colbert.modeling.model_utils import batch_index_select
 
@@ -160,13 +160,17 @@ class DenseFaissRetriever:
         print_message("#> Starting..")
         parts, parts_paths, samples_paths = get_parts(encoded_corpus_path)
         slice_parts_paths = parts_paths
-        sub_collection = [load_index_part(filename) for filename in slice_parts_paths if filename is not None]
-        sub_collection = torch.cat(sub_collection).to(torch.float32)
-        if l2norm:
-            sub_collection = F.normalize(sub_collection, p=2, dim=-1)
-        sub_collection = sub_collection.float().cpu().numpy()
-        print_message("#> Processing a sub_collection with shape", sub_collection.shape)
-        return sub_collection
+        for filename in tqdm(slice_parts_paths):
+            if filename is None:
+                continue
+            sub_collection = load_index_part(filename)
+            # if l2norm:
+            #     sub_collection = F.normalize(sub_collection, p=2, dim=-1)
+            # sub_collection = sub_collection.cpu().numpy().astype(np.float32)
+            sub_collection = sub_collection.cpu().float().numpy()
+            print_message("#> Processing a sub_collection with shape", sub_collection.shape)
+            yield sub_collection
+            del sub_collection
 
 
 from colbert.indexing.kmeans import kmeans
@@ -191,8 +195,8 @@ class ColbertRetriever(DenseFaissRetriever):
         index_config = self.index_config
         logger.info('loading index from ' + index_config['index_path'])
         logger.info(index_config)
-        self.faiss_index = FaissIndex(index_config['index_path'], index_config['faiss_index_path'],
-                                      index_config['n_probe'], part_range=index_config['part_range'], rank=self.rank)
+        self.faiss_index = RankingFaissIndex(index_config['index_path'], index_config['faiss_index_path'],
+                                             index_config['n_probe'], part_range=index_config['part_range'], rank=self.rank)
         self.retrieve = partial(self.faiss_index.retrieve, self.index_config['faiss_depth'])
         self.index = IndexPart(index_config['index_path'], dim=index_config['dim'], part_range=index_config['part_range'], verbose=True, model=self.model)
 
@@ -202,18 +206,45 @@ class ColbertRetriever(DenseFaissRetriever):
         if nprobe is not None:
             self.faiss_index.faiss_index.nprobe = nprobe
 
-    def get_colbert_index(self):
-        parts, parts_paths, samples_paths = get_parts(self.index_path)
-        return prepare_faiss_index(parts_paths, self.partitions, self.sample)
+    def get_colbert_index(self, collection):
+        # training_sample = np.array([collection[i] for i in np.random.choice(list(range(len(collection))), size=int(len(collection) * self.sample))])
+        # training_sample = training_sample.squeeze(1)
+        training_sample = collection
+        dim = training_sample.shape[-1]
+        index = FaissIndex(dim, self.partitions)
+        print_message("#> Training with the vectors...")
+        index.train(training_sample)
+        print_message("Done training!\n")
+        return index
+
+    def get_sample_corpus(self, encoded_corpus_path):
+        print_message("#> Starting..")
+        parts, parts_paths, samples_paths = get_parts(encoded_corpus_path)
+        slice_parts_paths = parts_paths
+        sub_collection = load_index_part(slice_parts_paths[0])
+        sub_collection = sub_collection.cpu().float().numpy()
+        print_message("#> Processing a sub_collection with shape", sub_collection.shape)
+        return sub_collection
 
     def encode_corpus(self, encoded_corpus_path):
-        collection = self.get_corpus_vectors(encoded_corpus_path)
-        colbert_faiss_index = self.get_colbert_index()
-        colbert_faiss_index.add(collection)
+        sample_collection = self.get_sample_corpus(encoded_corpus_path)
+        colbert_faiss_index = self.get_colbert_index(sample_collection)
+        for sub_collection in self.get_corpus_vectors(encoded_corpus_path):
+            colbert_faiss_index.add(sub_collection)
         print_message("Done indexing!")
         output_path = os.path.join(self.index_path, "ivfpq.2000.faiss")
         print_message(f"#> writing to {output_path}.")
         colbert_faiss_index.save(output_path)
+
+    @staticmethod
+    def get_doclens():
+        collection_dir = "/home2/awu/testcb/data/dureader/collection/"
+        for i in tqdm(range(12)):
+            file = f"{collection_dir}dureader_segmented_320_bert_tokenized_word_{i}.pt"
+            data = torch.load(file)
+            *_, active_padding = zip(*data)
+            doclens = torch.tensor([sum(_) for _ in tqdm(active_padding)])
+            torch.save(doclens, f"/home2/awu/testcb/index/geo/colbert_medqa_2e-2_weight/doclens.{i}.json")
 
     def search(self, query, topk_doc=None, filter_topk=None, **kwargs):
         Q = query
@@ -618,5 +649,6 @@ def test_term_manager():
 
 if __name__ == '__main__':
     # test_indexer()
-    test_colbert_indexer()
+    # test_colbert_indexer()
     # test_term_manager()
+    ColbertRetriever.get_doclens()

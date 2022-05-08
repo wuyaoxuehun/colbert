@@ -19,7 +19,8 @@ class FaissIndexGPU():
         if self.ngpu == 0:
             return
 
-        self.tempmem = 1 << 33
+        # self.tempmem = 1 << 33
+        self.tempmem = 1 << 34
         self.max_add_per_gpu = 1 << 25
         self.max_add = self.max_add_per_gpu * self.ngpu
         self.add_batch_size = 65536 // 2

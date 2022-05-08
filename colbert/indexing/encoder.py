@@ -10,6 +10,8 @@ import numpy as np
 import torch
 import ujson
 import gc
+
+from awutils.file_utils import dump_json, load_json
 from colbert.evaluation.loaders import load_colbert
 from colbert.indexing.index_manager import IndexManager
 from colbert.modeling.inference import ModelInference
@@ -100,10 +102,10 @@ class CollectionEncoder:
 
     def _initialize_iterator(self, part):
         collection_path = corpus_tokenized_prefix + f"_{part}.pt"
-        print_message(f"loading sub collection {collection_path} for rank {self.args.rank}")
+        print_message(f"loading sub collection {collection_path} for rank {self.args.rank}\n")
         collection = torch.load(collection_path)
         collection = collection[:len(collection) // 1]
-        sub_collection_num = math.ceil(len(collection) // self.args.nranks)
+        sub_collection_num = math.ceil(len(collection) / self.args.nranks)
         sub_collection = collection[sub_collection_num * self.args.rank:sub_collection_num * (self.args.rank + 1)]
         print_message('collection total %d' % (len(sub_collection),))
         # self.part_len = len(collection)
@@ -128,29 +130,35 @@ class CollectionEncoder:
         self.inference = ModelInference(self.colbert, amp=self.args.amp, segmenter=None, query_maxlen=self.args.query_maxlen, doc_maxlen=self.args.doc_maxlen)
 
     def encode_simple(self):
-        for i in range(2, 10):
+        for i in range(0, 1):
             barrier(self.args.rank)
             self.iterator = self._initialize_iterator(part=i)
-            embs, doclens = self._encode_batch(self.iterator)
+            # embs, doclens = self._encode_batch(self.iterator)
             # embs = distributed_concat(embs, concat=True, num_total_examples=self.part_len)
-            torch.save(embs, f"/home2/awu/testcb/data/dureader/temp/{self.args.rank}.pt")
+            # torch.save(embs, f"/home2/awu/testcb/data/dureader/temp/{self.args.rank}.pt")
+            # torch.save(embs, f"/home2/awu/testcb/data/dureader/temp/{self.args.rank}_doclens.pt")
+            # dump_json(doclens, f"/home2/awu/testcb/data/dureader/temp/{self.args.rank}_doclens.json")
             barrier(self.args.rank)
             if self.args.rank == 0:
                 all_embs = []
+                doclens = []
                 for j in range(self.args.nranks):
                     all_embs.append(torch.load(f"/home2/awu/testcb/data/dureader/temp/{j}.pt"))
+                    # all_doclens.append(load_json(f"/home2/awu/testcb/data/dureader/temp/{j}_doclens.json"))
+                    doclens += load_json(f"/home2/awu/testcb/data/dureader/temp/{j}_doclens.json")
                 embs = torch.cat(all_embs, dim=0)
+                # doclens = [_ for doclen in all_doclens for _ in doclen]
                 if not os.path.exists(self.args.index_path):
                     os.makedirs(self.args.index_path)
                 # encode_idx = self.args.rank
                 encode_idx = i
                 output_path = os.path.join(self.args.index_path, "{}.pt".format(encode_idx))
-                output_sample_path = os.path.join(self.args.index_path, "{}.sample".format(encode_idx))
-                doclens_path = os.path.join(self.args.index_path, 'doclens.{}.json'.format(encode_idx))
+                # output_sample_path = os.path.join(self.args.index_path, "{}.sample".format(encode_idx))
+                doclens_path = os.path.join(self.args.index_path, 'doclens.{}.json_'.format(encode_idx))
 
                 # Save the embeddings.
                 self.indexmgr.save(embs, output_path)
-                self.indexmgr.save(embs[torch.randint(0, high=embs.size(0), size=(embs.size(0) // 20,))], output_sample_path)
+                # self.indexmgr.save(embs[torch.randint(0, high=embs.size(0), size=(embs.size(0) // 20,))], output_sample_path)
                 print_message(f"saved {output_path}")
                 # Save the doclens.
                 with open(doclens_path, 'w') as output_doclens:

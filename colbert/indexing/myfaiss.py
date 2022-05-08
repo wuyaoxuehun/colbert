@@ -38,18 +38,18 @@ def load_sample(samples_paths, sample_fraction=None):
     return sample
 
 
-def prepare_faiss_index(slice_samples_paths, partitions, sample_fraction=None):
-    training_sample = load_sample(slice_samples_paths, sample_fraction=sample_fraction)
-    # training_sample = training_sample.squeeze(1)
-    dim = training_sample.shape[-1]
-    index = FaissIndex(dim, partitions)
-
-    print_message("#> Training with the vectors...")
-    index.train(training_sample)
-
-    print_message("Done training!\n")
-
-    return index
+# def prepare_faiss_index(slice_samples_paths, partitions, sample_fraction=None):
+#     training_sample = load_sample(slice_samples_paths, sample_fraction=sample_fraction)
+#     # training_sample = training_sample.squeeze(1)
+#     dim = training_sample.shape[-1]
+#     index = FaissIndex(dim, partitions)
+#
+#     print_message("#> Training with the vectors...")
+#     index.train(training_sample)
+#
+#     print_message("Done training!\n")
+#
+#     return index
 
 
 SPAN = 3

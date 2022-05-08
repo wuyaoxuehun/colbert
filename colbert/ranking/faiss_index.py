@@ -29,7 +29,7 @@ class FaissIndex():
 
         self.faiss_index = faiss.read_index(faiss_index_path)
         res = faiss.StandardGpuResources()
-        self.faiss_index = faiss.index_cpu_to_gpu(res, rank, self.faiss_index)
+        # self.faiss_index = faiss.index_cpu_to_gpu(res, rank, self.faiss_index)
         # self.faiss_index = faiss.index_cpu_to_all_gpus(self.faiss_index)
         self.faiss_index.nprobe = nprobe
         # self.faiss_index.cudaMallocWarning_ = False

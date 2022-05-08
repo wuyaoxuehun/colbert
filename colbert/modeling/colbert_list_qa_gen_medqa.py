@@ -75,7 +75,8 @@ class ModelHelper:
     @torch.no_grad()
     def retrieve_for_encoded_queries(self, batches, q_word_mask=None, retrieve_topk=10, model=None):
         if self.all_paras is None:
-            self.all_paras = list(load_all_paras(to_dict=True).values())
+            # self.all_paras = list(load_all_paras(to_dict=True).values())
+            self.all_paras = list(load_all_paras(to_dict=True))
             # self.all_paras = self.all_paras[1:] + self.all_paras[:1]
             from colbert.training.model_helper_server import ModelHelperServer
 

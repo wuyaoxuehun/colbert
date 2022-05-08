@@ -4,6 +4,7 @@ from collections import defaultdict
 import hanlp
 import numpy as np
 import pandas as pd
+import torch
 from tqdm import tqdm
 
 from awutils import dicutils
@@ -23,8 +24,8 @@ def get_dureader_segmented(part=4):
     return segmented_sents
 
 
-def load_all_paras_dureader():
-    return get_dureader_segmented()
+def load_all_paras_dureader(*args, **kwargs):
+    return get_dureader_segmented(1)
 
 
 def csv_reader(input_file, delimiter='\t'):
@@ -72,7 +73,7 @@ def index_dureader():
     es.index_corpus(segmented_sents)
 
 
-es = ES(index_name="dureader_seg")
+# es = ES(index_name="dureader_seg")
 
 topk = 50
 
@@ -164,6 +165,50 @@ def dureader_word_stat():
     print(np.mean(alllen), np.std(alllen), np.percentile(alllen, 95))
 
 
+def segment_test():
+    get_segmenter()
+    test_data = [json.loads(_) for _ in open("/home2/awu/testcb/data/dureader/dureader-retrieval-test1/test1.json", encoding='utf8')]
+    questions = batch_sents_cut([_['question'] for _ in test_data], batch_size=16)
+    data = [{'question': question, "question_cut": question_cut} for question, question_cut in zip([_['question'] for _ in test_data], questions)]
+    dump_json(data, "/home2/awu/testcb/data/dureader/test_cut.json")
+
+
+def check_pt_doclen():
+    idx = 0
+    pt = torch.load(f"/home2/awu/testcb//index/geo/colbert_medqa_2e-2_weight/{idx}.pt")
+    doclen = torch.load(f"/home2/awu/testcb//index/geo/colbert_medqa_2e-2_weight/doclens.{idx}.json")
+    doclen_ = load_json(f"/home2/awu/testcb//index/geo/colbert_medqa_2e-2_weight/doclens.{idx}.json_")
+    print(doclen.size(), len(doclen_))
+    for idx, (d1, d2) in tqdm(enumerate(zip(doclen, doclen_))):
+        if d1 != d2:
+            print(idx, ":", d1, d2)
+            input()
+    exit()
+    collection_dir = "/home2/awu/testcb/data/dureader/collection/"
+    file = f"{collection_dir}dureader_segmented_320_bert_tokenized_word_{idx}.pt"
+    data = torch.load(file)
+    # input_ids, attention_mask, active_spans, active_padding = zip(*data)
+    active_padding = [_[-1] for _ in data]
+    print(active_padding[0], active_padding[-1])
+    doclens = torch.tensor([sum(_) for _ in tqdm(active_padding)])
+    if not all([_ != 0 for _ in doclens]):
+        print('zero')
+        input()
+    print(len([_ for _ in doclens if _ == 1]))
+    # for active_span, active_pad in tqdm(zip(active_spans, active_padding)):
+    #     length = sum(active_pad)
+    #     if length <= 0:
+    #         print(length)
+    #         input()
+    #     for (i, j), pad in zip(active_span[:length], active_pad):
+    #         if j-i < 0:
+    #             print(active_span, active_pad)
+    #             input()
+
+    # print(pt.size(), sum(doclen), sum(doclens))
+    print(pt.size(), sum(doclen), sum(doclen_), sum(doclens))
+
+
 if __name__ == '__main__':
     # from torch.multiprocessing import Pool, set_start_method
     #
@@ -172,7 +217,9 @@ if __name__ == '__main__':
     # except RuntimeError:
     #     pass
     # index_dureader()
-    search_for_dureader_test()
+    # search_for_dureader_test()
+    # segment_test()
+    check_pt_doclen()
     # gen_dev()
     # cut_questions_for_train_dev()
     # dureader_word_stat()
