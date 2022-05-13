@@ -12,7 +12,7 @@ from colbert.training.CBQADataset_gen_medqa import CBQADataset, collate_fun
 # from colbert import base_config
 # from colbert.parameters import DEVICE
 from colbert.utils.amp import MixedPrecisionManager
-from awutils.file_utils import dump_json
+from awutils.file_utils import dump_json, load_json
 from colbert.training.training_utils import *
 from colbert.modeling.tokenization import CostomTokenizer
 
@@ -438,14 +438,15 @@ def eval_retrieval_for_model(args):
     # logger.info(f"eval loss = {eval_loss / eval_steps}")
     print(f'''data size {len(output_data)}''')
     # eval_res = eval_metric_for_data(output_data)
-    eval_res = eval_dataset(output_data)
+    # eval_res = eval_dataset(output_data)
 
     # evaluate_retrieval(output_data)
     print(save_result_file)
     dump_json(output_data, file=save_result_file)
-    eval_res["model"] = args.checkpoint
-    with open("/home2/awu/testcb/res/result.txt", 'a') as f:
-        f.write(json.dumps(eval_res, indent=2))
+    eval_dureader(output_data)
+    # eval_res["model"] = args.checkpoint
+    # with open("/home2/awu/testcb/res/result.txt", 'a') as f:
+    #     f.write(json.dumps(eval_res, indent=2))
     # p_num, padded_p_num = t_pnum, tpad_pnum
     # return eval_loss / eval_steps
     model_helper.close()
@@ -481,6 +482,27 @@ def eval_dataset(data):
     for k in topk:
         print(f'Top{k}\taccuracy: {np.mean(accuracy[k])}')
     return accuracy
+
+
+def eval_dureader(output_data):
+    # dureader_corpus_dir = "/home2/awu/testcb/data/dureader/dureader-retrieval-baseline-dataset/passage-collection/"
+    # passage_id_map = load_json(dureader_corpus_dir + "passage2id.map.json")
+    topk = 10
+    recall_topk = 50
+    res = 0
+    recall_res = 0
+    for t in output_data:
+        for i in range(topk):
+            if t['res'][i]['paragraph_cut'] in t['positive_ctxs']:
+                res += 1 / (i + 1)
+                break
+        for i in range(recall_topk):
+            if t['res'][i]['paragraph_cut'] in t['positive_ctxs']:
+                recall_res += 1
+                break
+
+    print(f"mrr@10 = {res / len(output_data)}")
+    print(f"recall@50 = {recall_res / len(output_data)}")
 
 
 def evaluate(args, model, mode='dev'):

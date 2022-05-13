@@ -18,3 +18,5 @@
 /__pycache__/
 /corpus/__pycache__/
 /wls/
+/awutils/__pycache__/
+/tests/

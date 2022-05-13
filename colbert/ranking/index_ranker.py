@@ -2,8 +2,10 @@
 # from conf import *
 from itertools import accumulate
 
+import torch
 from colbert.modeling.colbert_list_qa_gen import *
 from colbert.utils.utils import print_message
+from conf import DEVICE
 
 BSIZE = 1 << 14
 

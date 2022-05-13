@@ -46,8 +46,8 @@ class IndexPart():
 
             endpos = offset + sum(self.parts_doclens[idx])
             part = load_index_part(filename, verbose=verbose)
-            print(endpos - offset, part.size())
-            input()
+            # print(endpos - offset, part.size())
+            # input()
             # part = part.squeeze(1)
             tensor[offset:endpos] = part
             offset = endpos

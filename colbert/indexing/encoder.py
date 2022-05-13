@@ -1,25 +1,82 @@
-import itertools
 # from colbert.base_config import segmenter, overwrite_mask_cache
-import os
-import queue
-import threading
-import time
+
+import gc
+from multiprocessing import Pool
 
 import math
-import numpy as np
+import queue
+
+import threading
 import torch
 import ujson
-import gc
+import os
 
-from awutils.file_utils import dump_json, load_json
+from tqdm import tqdm
+
+os.environ['TOKENIZERS_PARALLELISM'] = 'true'
+from colbert.modeling.tokenization.doc_tokenization import DocTokenizer
+from awutils.file_utils import load_json, dump_json
 from colbert.evaluation.loaders import load_colbert
 from colbert.indexing.index_manager import IndexManager
 from colbert.modeling.inference import ModelInference
-# from colbert.modeling.tokenization.utils import get_real_inputs
-from colbert.training.training_utils import distributed_concat
-from colbert.utils.utils import print_message
-from conf import corpus_tokenized_prefix
 from colbert.utils.distributed import barrier
+# from colbert.modeling.tokenization.utils import get_real_inputs
+from colbert.utils.utils import print_message
+from conf import corpus_tokenized_prefix, doc_maxlen, load_all_paras
+
+# BUF_SIZE = 256
+# q = queue.Queue(BUF_SIZE)
+doc_tokenizer = DocTokenizer(doc_maxlen)
+
+
+def pre_tensorize(examples):
+    res = doc_tokenizer.tensorize_dict([examples], to_tensor=False)[0]
+    return res
+
+
+class BatchGenerator:
+    collection = load_all_paras()[:]
+
+    def __init__(self, part, rank, nranks):
+        BUF_SIZE = 1024
+        self.part = part
+        self.rank = rank
+        self.nranks = nranks
+        self.q = queue.Queue(BUF_SIZE)
+        collection = self.collection
+        split_num = 12
+        self.bs = 1024
+        print("collection total:", len(collection))
+        part_len = math.ceil(len(collection) / split_num)
+        # for part in range(12):
+        start, end = part * part_len, (part + 1) * part_len
+        collection = collection[start:end]
+        print("sub_collection total:", len(collection))
+        # sub_collection = collection
+        sub_collection_num = math.ceil(len(collection) / self.nranks)
+        collection = collection[sub_collection_num * self.rank:sub_collection_num * (self.rank + 1)]
+        self.sub_collection = collection
+        self.rank_collection_size = len(self.sub_collection)
+        print("rank_collection total:", len(self.sub_collection))
+        threading.Thread(target=self.run).start()
+
+    def run(self):
+        # part = self.part
+        q = self.q
+        bs = self.bs
+        sub_collection = self.sub_collection
+        # print("rank_collection total:", len(sub_collection))
+        for i in range(0, len(sub_collection), bs):
+            batch_data = sub_collection[i:i + bs]
+            with Pool(4) as p:
+                res = list(p.imap(pre_tensorize, batch_data))
+            # while q.full():
+            #     pass
+            q.put(res)
+        q.put(None)
+
+    def get_generator(self):
+        return self.q, self.rank_collection_size // self.bs
 
 
 class CollectionEncoder:
@@ -57,49 +114,6 @@ class CollectionEncoder:
         assert len(ids) == len(collection)
         return ids.cpu().tolist(), mask.cpu().tolist(), word_mask.tolist()
 
-    def _initialize_iterator_(self, overwrite=False):
-        # return open(self.collection)
-        # collection = iter(list(open(self.collection))[50000:])
-        # base_dir, file_name = os.path.split(self.collection)
-        # file_prefix, file_ext = os.path.splitext(file_name)
-        # pref = file_prefix + f'_{doc_maxlen}_{pretrain_choose}_tokenized'
-        # pre_tok_file = f'{pref}_tokenized.pt'
-        # pre_tok_file = file_prefix + '_tokenized_no_word_mask.pt'
-        # pre_tok_path = os.path.join(base_dir, pre_tok_file)
-        split_num = 12
-        # collection = [[], [], []]
-        collection = []
-        part_len = math.floor(split_num / self.args.nranks)
-        start, end = self.args.rank * part_len, (self.args.rank + 1) * part_len
-        if (split_num - end) < part_len:
-            end += 10
-        print_message(f"rank{self.args.rank}=[{start}, {end}]")
-
-        # start, end = 0, 1
-        for i in range(start, end):
-            # sub_collection_path = f'{pref}_{i}.pt'
-            # input(sub_collection_path)
-            collection_path = corpus_tokenized_prefix + f"_{i}.pt"
-            # input(collection_path)
-            # input(collection_path)
-            if not os.path.exists(collection_path):
-                break
-
-            print_message(f"loading sub collection {collection_path} for rank {self.args.rank}")
-            sub_collection = torch.load(collection_path)
-            # for j in range(3):
-            #     collection[j].extend(sub_collection[j])
-            collection += sub_collection
-
-        # collection = torch.load(pre_tok_path)
-        # collection = open(self.collection, encoding='utf8')
-        # next(collection)
-        # collection = list(zip(*collection))
-        print_message('collection total %d' % (len(collection),))
-        return collection
-
-        # return iter(list(zip(*collection))[:1000])
-
     def _initialize_iterator(self, part):
         collection_path = corpus_tokenized_prefix + f"_{part}.pt"
         print_message(f"loading sub collection {collection_path} for rank {self.args.rank}\n")
@@ -110,10 +124,6 @@ class CollectionEncoder:
         print_message('collection total %d' % (len(sub_collection),))
         # self.part_len = len(collection)
         return sub_collection
-
-    def _saver_thread(self):
-        for args in iter(self.saver_queue.get, None):
-            self._save_batch(*args)
 
     def _load_model(self, model=None):
         if model is None:
@@ -130,20 +140,32 @@ class CollectionEncoder:
         self.inference = ModelInference(self.colbert, amp=self.args.amp, segmenter=None, query_maxlen=self.args.query_maxlen, doc_maxlen=self.args.doc_maxlen)
 
     def encode_simple(self):
-        for i in range(0, 1):
+        for i in range(6, 12):
             barrier(self.args.rank)
-            self.iterator = self._initialize_iterator(part=i)
-            # embs, doclens = self._encode_batch(self.iterator)
+            # self.iterator = self._initialize_iterator(part=i)
+            batch_generator = BatchGenerator(part=i, rank=self.args.rank, nranks=self.args.nranks)
+            q, batch_num = batch_generator.get_generator()
+            embs, doclens = [], []
+            with tqdm(total=batch_num, disable=self.args.rank > 0) as pbar:
+                for batch in iter(q.get, None):
+                    batch_embs = self._encode_batch(batch)
+                    embs += batch_embs
+                    # doclens += [sum(_[-1]) for _ in batch]
+                    doclens += [d.size(0) for d in batch_embs]
+                    pbar.update(1)
+            embs = torch.cat(embs)
+            base_dir = "/home2/awu/testcb/"
             # embs = distributed_concat(embs, concat=True, num_total_examples=self.part_len)
-            # torch.save(embs, f"/home2/awu/testcb/data/dureader/temp/{self.args.rank}.pt")
+            torch.save(embs, f"/home2/awu/testcb/data/dureader/temp/{self.args.rank}.pt")
             # torch.save(embs, f"/home2/awu/testcb/data/dureader/temp/{self.args.rank}_doclens.pt")
-            # dump_json(doclens, f"/home2/awu/testcb/data/dureader/temp/{self.args.rank}_doclens.json")
+            dump_json(doclens, f"/home2/awu/testcb/data/dureader/temp/{self.args.rank}_doclens.json")
             barrier(self.args.rank)
             if self.args.rank == 0:
                 all_embs = []
                 doclens = []
                 for j in range(self.args.nranks):
                     all_embs.append(torch.load(f"/home2/awu/testcb/data/dureader/temp/{j}.pt"))
+                    # all_embs += torch.load(f"/home2/awu/testcb/data/dureader/temp/{j}.pt")
                     # all_doclens.append(load_json(f"/home2/awu/testcb/data/dureader/temp/{j}_doclens.json"))
                     doclens += load_json(f"/home2/awu/testcb/data/dureader/temp/{j}_doclens.json")
                 embs = torch.cat(all_embs, dim=0)
@@ -154,7 +176,7 @@ class CollectionEncoder:
                 encode_idx = i
                 output_path = os.path.join(self.args.index_path, "{}.pt".format(encode_idx))
                 # output_sample_path = os.path.join(self.args.index_path, "{}.sample".format(encode_idx))
-                doclens_path = os.path.join(self.args.index_path, 'doclens.{}.json_'.format(encode_idx))
+                doclens_path = os.path.join(self.args.index_path, 'doclens.{}.json'.format(encode_idx))
 
                 # Save the embeddings.
                 self.indexmgr.save(embs, output_path)
@@ -163,7 +185,7 @@ class CollectionEncoder:
                 # Save the doclens.
                 with open(doclens_path, 'w') as output_doclens:
                     ujson.dump(doclens, output_doclens)
-            del self.iterator
+            # del self.iterator
             del embs
             del doclens
             gc.collect()
@@ -176,64 +198,8 @@ class CollectionEncoder:
         with open(metadata_path, 'w') as output_metadata:
             ujson.dump(self.args.input_arguments.__dict__, output_metadata)
 
-    def _batch_passages(self, fi):
-        """
-        Must use the same seed across processes!
-        """
-        np.random.seed(0)
-
-        offset = 0
-        for owner in itertools.cycle(range(self.num_processes)):
-            print(self.possible_subset_sizes)
-            batch_size = np.random.choice(self.possible_subset_sizes)
-
-            L = [line for _, line in zip(range(batch_size), fi)]
-
-            if len(L) == 0:
-                break  # EOF
-
-            yield (offset, L, owner)
-            offset += len(L)
-
-            if len(L) < batch_size:
-                break  # EOF
-
-        self.print("[NOTE] Done with local share.")
-
-        return
-
-    def _preprocess_batch(self, offset, lines):
-        endpos = offset + len(lines)
-
-        batch = []
-
-        for line_idx, line in zip(range(offset, endpos), lines):
-            line_parts = line.strip().split('\t')
-            if len(line_parts) < 2:
-                print(line_parts)
-                print(line_idx)
-                if len(line_parts) == 1:
-                    line_parts = [-1, line_parts[0]]
-                else:
-                    line_parts = ['@', '@']
-            pid, passage, *other = line_parts
-            batch.append(passage)
-        return batch
-
-    def _encode_batch(self, batch):
+    def _encode_batch_(self, batch):
         with torch.no_grad():
-            # import math
-            # rank_data_len = math.ceil(len(batch) / self.args.nranks)
-            # start, end = self.args.rank * rank_data_len, (self.args.rank + 1) * rank_data_len
-            # print(f'local embs num = {len(d_ids)}')
-            # d_word_mask[:, 1:] = 0
-            # from colbert.modeling.tokenization.utils import get_real_inputs
-            # batch = list(zip(*batch))
-            # real_inputs = []
-            # print('getting real inputs')
-            # for t in tqdm(batch):
-            #     real_inputs.append(get_real_inputs(*t, max_seq_length=doc_maxlen))
-
             embs = self.inference.docFromTensorize(batch, bsize=self.args.bsize, keep_dims=False, to_cpu=True, args=self.args)
             assert type(embs) is list
             # assert len(embs) == len(d_ids)
@@ -243,24 +209,15 @@ class CollectionEncoder:
 
         return embs, local_doclens
 
-    def _save_batch(self, batch_idx, embs, offset, doclens):
-        start_time = time.time()
-
-        output_path = os.path.join(self.args.index_path, "{}.pt".format(batch_idx))
-        output_sample_path = os.path.join(self.args.index_path, "{}.sample".format(batch_idx))
-        doclens_path = os.path.join(self.args.index_path, 'doclens.{}.json'.format(batch_idx))
-
-        # Save the embeddings.
-        self.indexmgr.save(embs, output_path)
-        self.indexmgr.save(embs[torch.randint(0, high=embs.size(0), size=(embs.size(0) // 20,))], output_sample_path)
-
-        # Save the doclens.
-        with open(doclens_path, 'w') as output_doclens:
-            ujson.dump(doclens, output_doclens)
-
-        throughput = compute_throughput(len(doclens), start_time, time.time())
-        self.print_main("#> Saved batch #{} to {} \t\t".format(batch_idx, output_path),
-                        "Saving Throughput =", throughput, "passages per minute.\n")
+    def _encode_batch(self, batch):
+        with torch.no_grad():
+            embs = self.inference.docFromTensorize(batch, bsize=self.args.bsize, keep_dims=False, to_cpu=True, args=self.args)
+            return embs
+            # assert type(embs) is list
+            # # assert len(embs) == len(d_ids)
+            # print(f'local embs num = {len(embs)}')
+            # local_doclens = [d.size(0) for d in embs]
+            # embs = torch.cat(embs)
 
     def print(self, *args):
         print_message("[" + str(self.process_idx) + "]", "\t\t", *args)

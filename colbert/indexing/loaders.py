@@ -29,8 +29,8 @@ def load_doclens(directory, flatten=True):
     parts, _, _ = get_parts(directory)
 
     doclens_filenames = [os.path.join(directory, 'doclens.{}.json'.format(filename)) for filename in tqdm(parts)]
-    # all_doclens = [ujson.load(open(filename)) for filename in doclens_filenames]
-    all_doclens = [torch.load(filename).tolist() for filename in doclens_filenames]
+    all_doclens = [ujson.load(open(filename)) for filename in doclens_filenames]
+    # all_doclens = [torch.load(filename).tolist() for filename in doclens_filenames]
 
     if flatten:
         all_doclens = [x for sub_doclens in all_doclens for x in sub_doclens]

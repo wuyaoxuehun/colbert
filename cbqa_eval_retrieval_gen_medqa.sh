@@ -5,7 +5,7 @@ gpu='6,7'
 #gpu='2,3,4'
 #gpu='0,1,2'
 #gpu='2,3,4'
-gpu='0,1,2,4'
+gpu='1'
 #index_gpu="1,2,3,4"
 server_gpu="1"
 #gpu='2'
@@ -28,11 +28,13 @@ save_model_name="colbert_reader"
 save_model_name="colbert_medqa_${scoretemperature}_weight"
 #save_model_name="colbert_medqa_2e-2"
 retriever_model="colbert_schedule_2e-2_decouple"
-base_save_dir="/home2/awu/testcb/"
+#base_save_dir="/home2/awu/testcb/"
+base_dir="/home2/awu/testcb/"
+base_save_dir="/home/awu/testcb/"
 task="geo"
 #output_dir=$base_save_dir/output/webq/$save_model_name
-output_dir=$base_save_dir/output/$task/$save_model_name
-output_dir=$base_save_dir/output/$task/"$save_model_name"
+#output_dir=$base_dir/output/$task/$save_model_name
+output_dir=$base_dir/output/$task/"$save_model_name"
 index_path=$base_save_dir/index/$task/$save_model_name/
 server_index_path=$base_save_dir/index/$task/$save_model_name/
 
@@ -106,7 +108,7 @@ eval_metric_for_model(){
     --amp \
     --do_eval \
     --checkpoint $output_dir/pytorch.bin \
-    --batch_size 1 \
+    --batch_size 4 \
     --index_path $index_path/
 }
 

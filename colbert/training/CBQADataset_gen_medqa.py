@@ -176,14 +176,14 @@ class CBQADataset(Dataset):
     def merge_to_reader_input(batch_examples, batch_paras, extra=None):
         para_idx = 0
         # print(len(batch_paras), len(batch_examples))
-        batch_paras, batch_scores = batch_paras
+        batch_paras, batch_scores, batch_pids = batch_paras
         assert len(batch_paras) == len(batch_examples)
         for example in batch_examples:
-            example[f'res'] = [{"p_id": _['p_id'],
-                                "paragraph": ''.join(_['paragraph_cut']['tok'].split()),
-                                "paragraph_cut": _['paragraph_cut'],
+            example[f'res'] = [{"p_id": pid,
+                                "paragraph": '',
+                                "paragraph_cut": _,
                                 "colbert_score": score}
-                               for _, score in zip(batch_paras[para_idx], batch_scores[para_idx])]
+                               for _, score, pid in zip(batch_paras[para_idx], batch_scores[para_idx], batch_pids[para_idx])]
             para_idx += 1
         assert para_idx == len(batch_paras)
 
@@ -207,7 +207,7 @@ class CBQADataset(Dataset):
                 cur_pos_docs = t['positive_ctxs'][:2]
                 if len(cur_pos_docs) < 2:
                     cur_pos_docs.append(cur_pos_docs[-1])
-                assert len(t['hard_negative_ctxs']) >= 1
+                assert len(t['hard_negative_ctxs']) >= 18
                 cur_neg_docs = list(t['hard_negative_ctxs'][10:18])
             cur_docs = cur_pos_docs + cur_neg_docs
             docs += cur_docs

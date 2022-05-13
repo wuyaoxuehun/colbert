@@ -59,8 +59,8 @@ class BaseModel(nn.Module):
         # self.proj = nn.Linear(dim, 768)
         # self.comatch = Comatch(dim=dim)
         # self.extractor = EndpointSpanExtractor(input_dim=768, combination="x+y")
-        self.miu_linear = nn.Linear(768, 128)
-        self.logv_linear = nn.Linear(768, 128)
+        # self.miu_linear = nn.Linear(768, 128)
+        # self.logv_linear = nn.Linear(768, 128)
 
     @property
     def encoder(self):

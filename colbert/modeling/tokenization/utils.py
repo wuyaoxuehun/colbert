@@ -442,7 +442,7 @@ class CostomTokenizer(encoder_tokenizer):
     def tokenize_d_segmented_dict_geo(self, batch_text, max_seq_length, tqdm_enable=False, to_tensor=True, word=False):
         # num = 4
         d = []
-        batch_text = tqdm(batch_text, disable=len(batch_text) < 1000)
+        # batch_text = tqdm(batch_text, disable=len(batch_text) < 1000)
         # all_doc_segments = []
         for t in batch_text:
             doc = [t['paragraph_cut']['tok'].split()]
@@ -480,7 +480,7 @@ class CostomTokenizer(encoder_tokenizer):
     def tokenize_d_segmented_dict_medqa(self, batch_text, max_seq_length, tqdm_enable=False, to_tensor=True, word=False):
         # num = 4
         d = []
-        batch_text = tqdm(batch_text, disable=len(batch_text) < 1000)
+        # batch_text = tqdm(batch_text, disable=len(batch_text) < 1000)
         # all_doc_segments = []
         for t in batch_text:
             # print(t)

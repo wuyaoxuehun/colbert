@@ -42,7 +42,7 @@ index_type = "cblist"
 dim = 64
 # faiss_depth, nprobe = 256, 128
 # faiss_depth, nprobe = 512, 32
-faiss_depth, nprobe = 256, 256
+faiss_depth, nprobe = 128, 128
 # 256, 128
 len_dir_dic = {
     # 'rougelr': lambda ds_type, idx: f"data/bm25/sorted/{ds_type}_{idx}_rougelr_0.8_0.3_sorted.json",
@@ -104,6 +104,7 @@ task = 'dureader'
 fold = 0
 train_task = f"{task}-train-{fold}"
 dev_task = f"{task}-dev-{fold}"
+# test_task = f"{task}-test-{fold}"
 test_task = f"{task}-test-{fold}"
 save_result_file = f"data/bm25/sorted/temp_weight.json"
 

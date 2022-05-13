@@ -1,7 +1,7 @@
 import json
 from collections import defaultdict
 
-import hanlp
+# import hanlp
 import numpy as np
 import pandas as pd
 import torch
@@ -25,7 +25,7 @@ def get_dureader_segmented(part=4):
 
 
 def load_all_paras_dureader(*args, **kwargs):
-    return get_dureader_segmented(1)
+    return get_dureader_segmented(4)
 
 
 def csv_reader(input_file, delimiter='\t'):
@@ -174,27 +174,27 @@ def segment_test():
 
 
 def check_pt_doclen():
-    idx = 0
-    pt = torch.load(f"/home2/awu/testcb//index/geo/colbert_medqa_2e-2_weight/{idx}.pt")
-    doclen = torch.load(f"/home2/awu/testcb//index/geo/colbert_medqa_2e-2_weight/doclens.{idx}.json")
-    doclen_ = load_json(f"/home2/awu/testcb//index/geo/colbert_medqa_2e-2_weight/doclens.{idx}.json_")
-    print(doclen.size(), len(doclen_))
-    for idx, (d1, d2) in tqdm(enumerate(zip(doclen, doclen_))):
-        if d1 != d2:
-            print(idx, ":", d1, d2)
-            input()
-    exit()
-    collection_dir = "/home2/awu/testcb/data/dureader/collection/"
-    file = f"{collection_dir}dureader_segmented_320_bert_tokenized_word_{idx}.pt"
-    data = torch.load(file)
+    idx = 11
+    pt = torch.load(f"/home/awu/testcb//index/geo/colbert_medqa_2e-2_weight/{idx}.pt")
+    doclen = load_json(f"/home/awu/testcb//index/geo/colbert_medqa_2e-2_weight/doclens.{idx}.json")
+    # doclen_ = load_json(f"/home/awu/testcb//index/geo/colbert_medqa_2e-2_weight/doclens.{idx}.json_")
+    # print(doclen.size(), len(doclen_))
+    # for idx, (d1, d2) in tqdm(enumerate(zip(doclen, doclen_))):
+    #     if d1 != d2:
+    #         print(idx, ":", d1, d2)
+    #         input()
+    # exit()
+    # collection_dir = "/home2/awu/testcb/data/dureader/collection/"
+    # file = f"{collection_dir}dureader_segmented_320_bert_tokenized_word_{idx}.pt"
+    # data = torch.load(file)
     # input_ids, attention_mask, active_spans, active_padding = zip(*data)
-    active_padding = [_[-1] for _ in data]
-    print(active_padding[0], active_padding[-1])
-    doclens = torch.tensor([sum(_) for _ in tqdm(active_padding)])
-    if not all([_ != 0 for _ in doclens]):
-        print('zero')
-        input()
-    print(len([_ for _ in doclens if _ == 1]))
+    # active_padding = [_[-1] for _ in data]
+    # print(active_padding[0], active_padding[-1])
+    # doclens = torch.tensor([sum(_) for _ in tqdm(active_padding)])
+    # if not all([_ != 0 for _ in doclens]):
+    #     print('zero')
+    #     input()
+    # print(len([_ for _ in doclens if _ == 1]))
     # for active_span, active_pad in tqdm(zip(active_spans, active_padding)):
     #     length = sum(active_pad)
     #     if length <= 0:
@@ -206,7 +206,43 @@ def check_pt_doclen():
     #             input()
 
     # print(pt.size(), sum(doclen), sum(doclens))
-    print(pt.size(), sum(doclen), sum(doclen_), sum(doclens))
+    print(pt.size(), sum(doclen))
+    # print(pt.size(), sum(doclen), sum(doclen_), sum(doclens))
+
+
+def test_dureader():
+    file = "/home/awu/experiments/geo/others/testcb/data/bm25/sorted/temp_weight.json"
+    data = load_json(file)
+    from colbert.training.training_cbqa_retrieval_gen_medqa import eval_dureader
+    eval_dureader(data)
+
+
+def test_to_submit():
+    dureader_corpus_dir = "/home2/awu/testcb/data/dureader/dureader-retrieval-baseline-dataset/passage-collection/"
+    passage_id_map = load_json(dureader_corpus_dir + "passage2id.map.json")
+    all_segmented = load_all_paras_dureader()
+    seg_dict = {}
+    for i, seg in enumerate(all_segmented):
+        seg_dict[seg] = str(i)
+
+    test_res = load_json("data/bm25/sorted/temp_weight.json")
+    test_ori = load_json("/home2/awu/testcb/data/dureader/dureader-retrieval-test1/test1.json", line=True)
+    output = {}
+    for t, t_ori in tqdm(zip(test_res, test_ori)):
+        output[t_ori['question_id']] = [
+            passage_id_map[seg_dict[_['paragraph_cut']]]
+            for _ in t['res']
+        ]
+
+    dump_json(output, "data/test_res.json")
+
+
+def test_to_submit_short():
+    data = load_json("data/test_res.json")
+    res = {}
+    for k, v in list(data.items()):
+        res[k] = v[:50]
+    dump_json(res, "data/test_res.json")
 
 
 if __name__ == '__main__':
@@ -219,7 +255,9 @@ if __name__ == '__main__':
     # index_dureader()
     # search_for_dureader_test()
     # segment_test()
-    check_pt_doclen()
+    # check_pt_doclen()
+    # test_dureader()
+    test_to_submit_short()
     # gen_dev()
     # cut_questions_for_train_dev()
     # dureader_word_stat()

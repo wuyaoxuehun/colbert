@@ -82,13 +82,12 @@ class ModelInference():
         return self.doc(input_ids, attention_mask, keep_dims=keep_dims)
 
     def docFromTensorize(self, tensorizes, bsize=None, keep_dims=True, to_cpu=False, output_word_weight=False, args=None):
-
         if bsize:
             D = []
             D_word_weight_all = []
             iterator = range(0, len(tensorizes), bsize)
-            if len(tensorizes) > 16:
-                iterator = tqdm(iterator, disable=args.rank != args.nranks - 1)
+            # if len(tensorizes) > 16:
+            #     iterator = tqdm(iterator, disable=args.rank != args.nranks - 1)
 
             for offset in iterator:
                 # if (offset // bsize) % args.nranks != args.rank:
@@ -132,7 +131,7 @@ class ModelInference():
                         d_word_mask_bool = d_word_mask.cpu().bool().squeeze(-1)
                         D_word_weight = [dww[d_word_mask_bool[idx]] for idx, dww in enumerate(D_word_weight)]
                 # print(batches[0].size())
-                assert len(batches[0].size()) == 2
+                # assert len(batches[0].size()) == 2
                 D.extend(batches)
                 if output_word_weight:
                     D_word_weight_all.extend(D_word_weight)

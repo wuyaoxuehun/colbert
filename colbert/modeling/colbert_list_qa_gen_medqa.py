@@ -94,7 +94,7 @@ class ModelHelper:
 
         # batch_paras = [[self.all_paras[np.random.randint(0, len(self.all_paras))] for pid in pids] for pids in batch_pids]
         # return batch_D, batch_D_mask, batch_paras
-        return batch_paras, batch_scores
+        return batch_paras, batch_scores, batch_pids
 
     def close(self):
         if self.conn is not None:
@@ -173,6 +173,7 @@ class ColBERT_List_qa(BaseModel):
         # q_ids, q_attention_mask, q_active_spans, q_active_padding, *word_weight_parts = [_.cuda() for _ in q]
         q_ids, q_attention_mask, q_active_spans, q_active_padding, *_ = [_.cuda() for _ in q]
         # Q, Q_output = self.query(q_ids, q_attention_mask, q_active_spans, q_active_padding, with_word_weight=query_word_weight, dpr=True, output_ori=True)
+        t1 = time.time()
         Q = self.query(q_ids, q_attention_mask, q_active_spans, q_active_padding, with_word_weight=query_word_weight, dpr=False, output_ori=False)
         # Q = self.query(q_ids, q_attention_mask, q_active_spans, q_active_padding, with_word_weight=query_word_weight)
         if is_testing_retrieval:
@@ -199,9 +200,12 @@ class ColBERT_List_qa(BaseModel):
 
             # Q, q_active_padding = self.filter_query(Q, q_active_padding)
             # Q = F.normalize(Q, p=2, dim=-1)
+            t2 = time.time()
             d_paras = model_helper.retrieve_for_encoded_queries(Q, q_word_mask=q_active_padding, retrieve_topk=eval_p_num, model=self)
             train_dataset.merge_to_reader_input(batch, d_paras)
-
+            t3 = time.time()
+            # print(t2-t1, t3-t2)
+            # input()
             # d, scores = train_dataset.tokenize_for_train_retriever(batch, [], eval_p_num=eval_p_num, is_evaluating=True)
             # assert len(batch)
             return
