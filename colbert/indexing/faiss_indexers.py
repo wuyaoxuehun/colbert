@@ -189,6 +189,7 @@ class ColbertRetriever(DenseFaissRetriever):
         if index_config is not None:
             self.faiss_depth = self.index_config['faiss_depth']
         self.sample = sample
+        self.l2norm = False
         # self.index_term_manager = IndexTermManager()
 
     def load_index(self):
@@ -259,7 +260,10 @@ class ColbertRetriever(DenseFaissRetriever):
         # total = q_active_padding.sum(-1)
         # Q_new = Q[sorted_ww[:filter_topk]]
         t1 = time.time()
-        search_Q = F.normalize(Q.to(torch.float32), p=2, dim=-1)
+        if self.l2norm:
+            search_Q = F.normalize(Q.to(torch.float32), p=2, dim=-1)
+        else:
+            search_Q = Q
         # print(search_Q.norm(p=2, dim=-1))
         # input()
         # search_Q = F.normalize(Q_new.to(torch.float32), p=2, dim=-1)

@@ -39,16 +39,16 @@ pretrain_map = {
 pretrain = str(pretrain_map[pretrain_choose])
 
 index_type = "cblist"
-dim = 64
+dim = 768
 # faiss_depth, nprobe = 256, 128
 # faiss_depth, nprobe = 512, 32
-faiss_depth, nprobe = 128, 128
+faiss_depth, nprobe = 2048, 1024
 # 256, 128
 len_dir_dic = {
     # 'rougelr': lambda ds_type, idx: f"data/bm25/sorted/{ds_type}_{idx}_rougelr_0.8_0.3_sorted.json",
     "colbert0": [256, 320, 256, 256],
     # "medqa_filter_merge": [32, 512, 32, 320],
-    "medqa_filter_merge": [32, 512, 32, 320],
+    "medqa_filter_merge": [32, 320, 64, 320],
 }
 query_maxlen, doc_maxlen, query_max_span_length, doc_max_span_length = len_dir_dic['medqa_filter_merge']
 
@@ -118,12 +118,12 @@ data_dir_dic = {
     "medqa_long": lambda ds_type, idx: f"/home2/awu/testcb/data/MedQA/long/{ds_type}.json",
     "medqa_merge": lambda ds_type, idx: f"/home2/awu/testcb/data/MedQA/merge/{ds_type}.json",
     "medqa_filter_merge": lambda ds_type, idx: f"/home2/awu/testcb/data/MedQA_filter/merge/{ds_type}.json",
-    "dureader": lambda dstype, idx: f"/home2/awu/testcb/data/dureader/{dstype}_cut.json"
+    "dureader": lambda dstype, idx: f"/home2/awu/testcb/data/dureader/{dstype}.json"
 }
 
 model_map = {
     'bert-base-en_uncased': (BertModel, BertConfig, BertTokenizerFast, '[unused1] ', '[unused2] ', " [CLS] ", " [SEP] ", " [SEP] ", 3e-5),
-    'bert': (BertForMaskedLM, BertConfig, BertTokenizerFast, '[unused1] ', '[unused2] ', " [CLS] ", " [SEP] ", " [SEP] ", 3e-5),
+    'bert': (BertForMaskedLM, BertConfig, BertTokenizerFast, '[unused1] ', '[unused2] ', " [CLS] ", " [SEP] ", " [SEP] ", 1e-5),
     'ernie': (BertModel, BertConfig, BertTokenizerFast, '[unused1] ', '[unused2] ', " [CLS] ", " [SEP] ", " [SEP] ", 3e-5),
     "t5_base": (T5ForConditionalGeneration, T5Config, T5TokenizerFast, "query: ", "document: ", " ", " </s> ", " . ", 1e-4)
     # "t5_base": (T5ForConditionalGeneration, T5Config, T5TokenizerFast, " query: ", " document: ", " ", " , ", " , ", 1e-4)
@@ -190,6 +190,9 @@ stop_epoch = 100
 Q_TOPK = 1000
 D_TOPK = 1000
 # query_aug_topk = 7
+
+QView, DView = 4, 14
+
 query_aug_topk = 16
 # query_aug_topk = 4
 # query_aug_topk = 0
@@ -231,7 +234,8 @@ corpus_index_term_path = f"/home2/awu/testcb/tests/webqdata/webq_corpus_word_" \
 kl_answer_re_loss = False
 kl_temperature = 0.1
 
-retriever_criterion = BiEncoderNllLossTri
+# retriever_criterion = BiEncoderNllLossTri
+retriever_criterion = BiEncoderNllLoss
 # retriever_criterion = listMLE
 # retriever_criterion = listMLEWeighted
 # retriever_criterion = listnet_loss

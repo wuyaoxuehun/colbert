@@ -70,8 +70,8 @@ def train(args):
     # optimized_modules = [[t.model, t.linear, t.q_word_weight_linear, t.d_word_weight_linear]]
     # optimized_modules = [[t.model, t.linear, t.q_word_weight_linear, t.esim_linear_42, t.esim_linear_80]]
     # optimized_modules = [[t.model, t.linear, t.q_word_weight_linear, t.comatch]]
-    optimized_modules = [[t.model, t.linear]]
-    lrs = [[lr, lr]]
+    optimized_modules = [[t.model]]
+    lrs = [[lr]]
     logger.info("learning rate is " + str(lrs))
     params = []
     weight_decay = 0.0
@@ -488,13 +488,25 @@ def eval_dureader(output_data):
     # dureader_corpus_dir = "/home2/awu/testcb/data/dureader/dureader-retrieval-baseline-dataset/passage-collection/"
     # passage_id_map = load_json(dureader_corpus_dir + "passage2id.map.json")
     topk = 10
-    recall_topk = 50
+    recall_topk = 60
     res = 0
     recall_res = 0
     for t in output_data:
+        # input(len(t['res']))
+        # print('*' * 100)
+        # print(t['question'])
+        # print(t['res'][0]['paragraph_cut'])
+        # for i in t['positive_ctxs']:
+        #     print(i)
+        # input(t['res'][0]['paragraph_cut'] in t['positive_ctxs'])
+        # continue
+
         for i in range(topk):
             if t['res'][i]['paragraph_cut'] in t['positive_ctxs']:
                 res += 1 / (i + 1)
+                # print(t['res'][i]['paragraph_cut'])
+                # print(t['positive_ctxs'])
+                # input()
                 break
         for i in range(recall_topk):
             if t['res'][i]['paragraph_cut'] in t['positive_ctxs']:

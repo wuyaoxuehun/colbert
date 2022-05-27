@@ -29,7 +29,7 @@ from colbert.modeling.model_utils import to_real_input_all
 #     return [torch.tensor(_) for _ in t]
 
 
-class ModelInference():
+class ModelInference:
     def __init__(self, colbert, segmenter, amp=False, query_maxlen=None, doc_maxlen=None):
         # assert colbert.training is False
 
@@ -102,11 +102,14 @@ class ModelInference():
                 # t = list(zip(*real_inputs))
                 # t[1] = np.array(t[1])
                 # input_ids, attention_mask, active_indices, active_padding = [torch.tensor(_) for _ in t]
-                input_ids, attention_mask, active_indices, active_padding = to_real_input_all(t)
+                # input_ids, attention_mask, active_indices, active_padding = to_real_input_all(t)
+                input_ids, attention_mask, *_ = to_real_input_all(t)
 
-                d_word_mask = active_padding
-                batches = self.doc(input_ids.to(DEVICE), attention_mask.to(DEVICE), active_indices.to(DEVICE), to_cpu=to_cpu, output_word_weight=output_word_weight,
-                                   with_word_weight=doc_word_weight)
+                # d_word_mask = active_padding
+                # batches = self.doc(input_ids.to(DEVICE), attention_mask.to(DEVICE), active_indices.to(DEVICE), to_cpu=to_cpu, output_word_weight=output_word_weight,
+                #                    with_word_weight=doc_word_weight)
+                batches = self.doc(input_ids.to(DEVICE), attention_mask.to(DEVICE))
+
                 D_word_weight = None
                 if output_word_weight:
                     batches, D_word_weight = batches
@@ -123,13 +126,16 @@ class ModelInference():
                     #     batches = [d[:D_TOPK, ...] for d, dw_mask_bool in zip(batches, d_word_mask_bool)]
                     # else:
                     # batches = [d[:D_TOPK][dw_mask_bool][:D_TOPK] for d, dw_mask_bool in zip(batches, d_word_mask_bool)]
-                    batches = [qd_mask_to_realinput(D=d, d_word_mask=dw_mask, keep_dim=False)[0] for d, dw_mask in zip(batches, d_word_mask)]
+                    # batches = [qd_mask_to_realinput(D=d, d_word_mask=dw_mask, keep_dim=False)[0] for d, dw_mask in zip(batches, d_word_mask)]
+                    batches = [d for d in batches]
+                    # print([_.size() for _ in batches])
+                    # input()
                     # batches = [d[:1] for idx, d in enumerate(batches)]
                     # batches = [d[:topk_token][d_word_mask_bool[idx][:topk_token]] for idx, d in enumerate(batches)]
                     # batches = [d[:D_TOPK] for idx, d in enumerate(batches)]
-                    if output_word_weight:
-                        d_word_mask_bool = d_word_mask.cpu().bool().squeeze(-1)
-                        D_word_weight = [dww[d_word_mask_bool[idx]] for idx, dww in enumerate(D_word_weight)]
+                    # if output_word_weight:
+                    #     d_word_mask_bool = d_word_mask.cpu().bool().squeeze(-1)
+                    #     D_word_weight = [dww[d_word_mask_bool[idx]] for idx, dww in enumerate(D_word_weight)]
                 # print(batches[0].size())
                 # assert len(batches[0].size()) == 2
                 D.extend(batches)

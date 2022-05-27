@@ -8,7 +8,7 @@ from transformers import BertPreTrainedModel
 from colbert.modeling.model_utils import span_mean, max_pool_by_mask, avg_pool_by_mask
 import torch.nn.functional as F
 
-from conf import use_part_weight, dim
+from conf import use_part_weight, dim, QView, DView
 from colbert.modeling.submodels import Comatch
 from allennlp.modules.span_extractors import MaxPoolingSpanExtractor, EndpointSpanExtractor
 
@@ -23,7 +23,8 @@ class BaseModel(nn.Module):
         self.q_word_weight_linear = None
         self.d_word_weight_linear = None
         self.part_linear = None
-        self.get_representation = self.get_representation_whole if not use_part_weight else self.get_representation_part
+        # self.get_representation = self.get_representation_whole if not use_part_weight else self.get_representation_part
+        self.get_representation = self.get_representation_whole
         # kernel_sizes = [1]
         # n_kernels = 128
         # self.convs = nn.ModuleList([
@@ -156,31 +157,42 @@ class BaseModel(nn.Module):
     #             #     parts_mean, parts_mean_len, = span_mean(t_, part_spans)
     #     return t
 
+    # def get_representation_whole(self, t, active_indices, active_padding=None, multiply_span_len=False,
+    #                               use_word=True, l2norm=True, with_word_weight=False, embd_type="query", output_ori=False):
+    #     # t_, span_len = span_mean(t, active_indices)
+    #     # t_ = self.extractor(t, active_indices)
+    #     # t = self.linear(t_)
+    #     t = self.linear(t[:])
+    #     # t = self.comatch.proj_linear(t_)
+    #     t_norm = torch.nn.functional.normalize(t, p=2, dim=2)
+    #     # if multiply_span_len:
+    #     #     t_norm = t_norm
+    #     if with_word_weight:
+    #         if embd_type == "query":
+    #             word_weight = self.q_word_weight_linear(t_).squeeze(-1)
+    #             if True:
+    #                 scale_factor = torch.log(active_padding.sum(-1)) / math.log(256) / math.sqrt(dim)
+    #                 # print(word_weight[0])
+    #                 word_weight = word_weight * scale_factor[:, None]
+    #                 word_weight[active_padding == 0] = -1e4
+    #                 # print(scale_factor)
+    #                 # print(word_weight[0])
+    #             softmax_word_weight = F.softmax(word_weight, dim=-1)
+    #             # t_norm = t_norm * softmax_word_weight[..., None]
+    #             t_norm = t_norm * softmax_word_weight[..., None]
+    #     if output_ori:
+    #         return t_norm, t_
+    #     return t_norm
+
     def get_representation_whole(self, t, active_indices, active_padding=None, multiply_span_len=False,
-                                  use_word=True, l2norm=True, with_word_weight=False, embd_type="query", output_ori=False):
-        t_, span_len = span_mean(t, active_indices)
-        # t_ = self.extractor(t, active_indices)
-        t = self.linear(t_)
-        # t = self.comatch.proj_linear(t_)
-        t_norm = torch.nn.functional.normalize(t, p=2, dim=2)
-        # if multiply_span_len:
-        #     t_norm = t_norm
-        if with_word_weight:
-            if embd_type == "query":
-                word_weight = self.q_word_weight_linear(t_).squeeze(-1)
-                if True:
-                    scale_factor = torch.log(active_padding.sum(-1)) / math.log(256) / math.sqrt(dim)
-                    # print(word_weight[0])
-                    word_weight = word_weight * scale_factor[:, None]
-                    word_weight[active_padding == 0] = -1e4
-                    # print(scale_factor)
-                    # print(word_weight[0])
-                softmax_word_weight = F.softmax(word_weight, dim=-1)
-                # t_norm = t_norm * softmax_word_weight[..., None]
-                t_norm = t_norm * softmax_word_weight[..., None]
-        if output_ori:
-            return t_norm, t_
-        return t_norm
+                                 use_word=True, l2norm=True, with_word_weight=False, embd_type="query", output_ori=False):
+        if embd_type == 'query':
+            # t = self.linear(t[:])
+            t = t[:, :QView, ...].contiguous()
+        else:
+            t = t[:, :DView, ...].contiguous()
+        t = torch.nn.functional.normalize(t, p=2, dim=2)
+        return t
 
     def get_representation_whole_(self, t, active_indices, *args, **kwargs):
         t_, span_len = span_mean(t, active_indices)
@@ -417,27 +429,37 @@ class BaseModel(nn.Module):
         return scores
 
     @staticmethod
-    def score(Q, D, q_mask=None, d_mask=None, q_word_weight=None, output_match_weight=False):
+    def score(Q, D, lce=False, *args, **kwargs):
         # print(q_mask[0])
         # q_mask = q_mask.bool().to(dtype=torch.int32)
         # d_mask = d_mask.bool().to(dtype=torch.int32)
         # if d_mask is not None and q_mask is not None:
         # Q_norm, D_norm = [F.normalize(_, p=2, dim=-1) for _ in [Q, D]]
-        Q_norm, D_norm = Q, D
-        D = D_norm * d_mask[..., None]
-        Q = Q_norm * q_mask[..., None]
+        # Q_norm, D_norm = Q, D
+        # D = D_norm * d_mask[..., None]
+        # Q = Q_norm * q_mask[..., None]
         # if q_word_weight:
         # print(Q[0].norm(p=2, dim=-1))
         # print(D[0].norm(p=2, dim=-1))
         # input()
-        scores_match = einsum("qmh,dnh->qdmn", Q, D).max(-1)[0]
+        simmat = einsum("qmh,dnh->qdmn", Q, D)
+        scores_match, indices = simmat.max(-1)
         # print(scores[0][0])
         # input()
         scores = scores_match.sum(-1)
-        if output_match_weight:
-            return scores, einsum("qmh,dnh->qdmn", F.normalize(Q, p=2, dim=-1), D).max(-1)[0]
-        scores = scores / (q_mask.bool().sum(-1)[:, None])
+        # if output_match_weight:
+        #     return scores, einsum("qmh,dnh->qdmn", F.normalize(Q, p=2, dim=-1), D).max(-1)[0]
+        # scores = scores / (q_mask.bool().sum(-1)[:, None])
         # scores = F.relu(einsum("qmh,dnh->qdmn", Q, D)).max(-1)[0].sum(-1)
+        if lce:
+            from colbert.training.losses import BiEncoderNllLoss
+            simmat = simmat.contiguous()
+            lce_scores = simmat.view(Q.size(0) * Q.size(1) * D.size(0), -1) / 2e-2
+            lce_labels = indices.view(-1)
+            # print(lce_scores.size(), lce_labels.size())
+            # input()
+            lce_loss = BiEncoderNllLoss(lce_scores, positive_idx_per_question=lce_labels)
+            return scores, lce_loss
         return scores
 
     @staticmethod

@@ -204,6 +204,8 @@ class CBQADataset(Dataset):
                 cur_neg_docs = list(context_random.choice(t['hard_negative_ctxs'][:], 1))
             else:
                 # cur_pos_docs = list(context_random.choice(t['positive_ctxs'][:10], 1))
+                if len(t['positive_ctxs']) < 2:
+                    t['positive_ctxs'].append(t['positive_ctxs'][0])
                 cur_pos_docs = t['positive_ctxs'][:2]
                 if len(cur_pos_docs) < 2:
                     cur_pos_docs.append(cur_pos_docs[-1])

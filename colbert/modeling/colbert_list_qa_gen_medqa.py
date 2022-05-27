@@ -15,6 +15,7 @@ from conf import *
 import logging
 import torch.nn.functional as F
 from colbert.training.losses import kl_loss, BiEncoderNllLossMS
+from proj_utils.dureader_utils import get_dureader_ori_corpus
 
 torch.multiprocessing.set_sharing_strategy("file_system")
 # torch.multiprocessing.set_start_method('spawn', force=True)
@@ -57,7 +58,8 @@ class ModelHelper:
             address = ('localhost', 9090)
             self.conn = Client(address, authkey=b'1')
             print('connected to server')
-            self.all_paras = load_all_paras()
+            # self.all_paras = load_all_paras()
+            self.all_paras = get_dureader_ori_corpus()
         retrieve_input = self.to_real_batch(batches, q_word_mask, retrieve_topk)
         self.conn.send(retrieve_input)
         data = self.conn.recv()
@@ -76,7 +78,8 @@ class ModelHelper:
     def retrieve_for_encoded_queries(self, batches, q_word_mask=None, retrieve_topk=10, model=None):
         if self.all_paras is None:
             # self.all_paras = list(load_all_paras(to_dict=True).values())
-            self.all_paras = list(load_all_paras(to_dict=True))
+            # self.all_paras = list(load_all_paras(to_dict=True))
+            self.all_paras = get_dureader_ori_corpus()
             # self.all_paras = self.all_paras[1:] + self.all_paras[:1]
             from colbert.training.model_helper_server import ModelHelperServer
 
@@ -121,13 +124,13 @@ class ColBERT_List_qa(BaseModel):
         # self.model = encoder_model(self.config)
         self.model = encoder_model.from_pretrained(pretrain)
 
-        self.linear = nn.Linear(self.config.hidden_size, dim, bias=False)
-        self.q_word_weight_linear = nn.Sequential(
-            nn.Linear(self.config.hidden_size, self.config.hidden_size),
-            nn.ReLU(),
-            nn.Linear(self.config.hidden_size, 1, bias=False),
-            # nn.Linear(self.config.hidden_size, 1)
-        )
+        # self.linear = nn.Linear(self.config.hidden_size, dim, bias=False)
+        # self.q_word_weight_linear = nn.Sequential(
+        #     nn.Linear(self.config.hidden_size, self.config.hidden_size),
+        #     nn.ReLU(),
+        #     nn.Linear(self.config.hidden_size, 1, bias=False),
+        #     # nn.Linear(self.config.hidden_size, 1)
+        # )
         # self.d_word_weight_linear = nn.Sequential(
         #     nn.Linear(self.config.hidden_size, self.config.hidden_size),
         #     nn.ReLU(),
@@ -161,7 +164,7 @@ class ColBERT_List_qa(BaseModel):
         positive_idxes = torch.zeros_like(scores)
         positive_idxes.scatter_(dim=-1, index=labels.to(scores.device), value=1)
         res = positive_idxes.gather(1, sorted_idx)
-        return res.nonzero()[:, 1].sum()
+        return res.nonzero()[:, 1].float().mean()
 
     # def forward(self, batch, labels):
     def forward(self, batch, train_dataset, is_evaluating=False, merge=False, doc_enc_training=True,
@@ -171,10 +174,11 @@ class ColBERT_List_qa(BaseModel):
         q = train_dataset.tokenize_for_retriever(batch)
 
         # q_ids, q_attention_mask, q_active_spans, q_active_padding, *word_weight_parts = [_.cuda() for _ in q]
-        q_ids, q_attention_mask, q_active_spans, q_active_padding, *_ = [_.cuda() for _ in q]
+        # q_ids, q_attention_mask, q_active_spans, q_active_padding, *_ = [_.cuda() for _ in q]
+        q_ids, q_attention_mask, *_ = [_.cuda() for _ in q]
         # Q, Q_output = self.query(q_ids, q_attention_mask, q_active_spans, q_active_padding, with_word_weight=query_word_weight, dpr=True, output_ori=True)
         t1 = time.time()
-        Q = self.query(q_ids, q_attention_mask, q_active_spans, q_active_padding, with_word_weight=query_word_weight, dpr=False, output_ori=False)
+        Q = self.query(q_ids, q_attention_mask)
         # Q = self.query(q_ids, q_attention_mask, q_active_spans, q_active_padding, with_word_weight=query_word_weight)
         if is_testing_retrieval:
             # Q = Q * q_active_padding[..., None]
@@ -201,7 +205,8 @@ class ColBERT_List_qa(BaseModel):
             # Q, q_active_padding = self.filter_query(Q, q_active_padding)
             # Q = F.normalize(Q, p=2, dim=-1)
             t2 = time.time()
-            d_paras = model_helper.retrieve_for_encoded_queries(Q, q_word_mask=q_active_padding, retrieve_topk=eval_p_num, model=self)
+            # d_paras = model_helper.retrieve_for_encoded_queries(Q, q_word_mask=q_active_padding, retrieve_topk=eval_p_num, model=self)
+            d_paras = model_helper.retrieve_for_encoded_queries(Q, q_word_mask=torch.ones(Q.size(0), 1), retrieve_topk=eval_p_num, model=self)
             train_dataset.merge_to_reader_input(batch, d_paras)
             t3 = time.time()
             # print(t2-t1, t3-t2)
@@ -217,8 +222,10 @@ class ColBERT_List_qa(BaseModel):
 
         d, scores = train_dataset.tokenize_for_train_retriever(batch, eval_p_num=eval_p_num, is_evaluating=is_evaluating)
 
-        d_ids, d_attention_mask, d_active_indices, d_active_padding, *_ = [_.cuda() for _ in d]
-        D = self.doc(d_ids, d_attention_mask, d_active_indices, with_word_weight=doc_word_weight, dpr=False, output_ori=False)
+        # d_ids, d_attention_mask, d_active_indices, d_active_padding, *_ = [_.cuda() for _ in d]
+        d_ids, d_attention_mask, *_ = [_.cuda() for _ in d]
+        # D = self.doc(d_ids, d_attention_mask, d_active_indices, with_word_weight=doc_word_weight, dpr=False, output_ori=False)
+        D = self.doc(d_ids, d_attention_mask)
 
         # Q, D = Q.to(DEVICE), D.to(DEVICE)
         # Q, q_word_mask, D, d_word_mask = [_.to(DEVICE).contiguous()
@@ -229,20 +236,22 @@ class ColBERT_List_qa(BaseModel):
 
         # Q, Q_ori, D, D_ori = Q.to(DEVICE), Q_ori.to(DEVICE), D.to(DEVICE), D_ori.to(DEVICE)
         # Q, D = Q.to(DEVICE), D.to(DEVICE)
-        Q, q_word_mask, D, d_word_mask = [_.to(DEVICE).contiguous()
-                                          for _ in qd_mask_to_realinput(Q=Q, D=D, q_word_mask=q_active_padding, d_word_mask=d_active_padding)]
+        # Q, q_word_mask, D, d_word_mask = [_.to(DEVICE).contiguous()
+        #                                   for _ in qd_mask_to_realinput(Q=Q, D=D, q_word_mask=q_active_padding, d_word_mask=d_active_padding)]
+        # q_word_mask, d_word_mask = q_attention_mask, d_attention_mask
         # Q_ori, _, D_ori, _ = [_.to(DEVICE).contiguous()
         #                       for _ in qd_mask_to_realinput(Q=Q_ori, D=D_ori, q_word_mask=q_active_padding, d_word_mask=d_active_padding)]
 
         # Q, q_word_mask, D, d_word_mask, scores = collection_qd_masks([Q, q_word_mask, D, d_word_mask, scores])
-        Q, q_word_mask, D, d_word_mask = collection_qd_masks([Q, q_word_mask, D, d_word_mask])
+        # Q, q_word_mask, D, d_word_mask = collection_qd_masks([Q, q_word_mask, D, d_word_mask])
+        Q, D = collection_qd_masks([Q, D])
         # Q, Q_ori, q_word_mask, D, D_ori, d_word_mask = collection_qd_masks([Q, Q_ori, q_word_mask, D, D_ori, d_word_mask])
 
         if not is_evaluating:
             positive_idx_per_question = torch.tensor([_ * 2 for _ in range(Q.size(0))])
         else:
             positive_idx_per_question = torch.tensor([_ * 6 for _ in range(Q.size(0))])
-        pred_scores = self.score(Q, D, q_mask=q_word_mask, d_mask=d_word_mask)
+        pred_scores = self.score(Q, D, lce=False)
         # pred_esim_scores = self.score_esim(Q, D, q_mask=q_word_mask, d_mask=d_word_mask)
         # pred_esim_scores = self.score_comatch(Q, D, q_mask=q_word_mask, d_mask=d_word_mask)
         # pred_esim_scores = self.score_comatch(Q_ori, D_ori, q_mask=q_word_mask, d_mask=d_word_mask)
@@ -266,8 +275,9 @@ class ColBERT_List_qa(BaseModel):
         #     print(torch.nn.functional.softmax(pred_scores / score_temperature, dim=-1))
         # input()
         # cur_retriever_loss = retriever_criterion(y_pred=pred_scores / score_temperature, y_true=scores, neg_weight_mask=neg_weight_mask)
-        if is_evaluating:
-            score_temperature = 1
+        score_temperature = 2e-2
+        # if is_evaluating:
+        #     score_temperature = 1
         # score_temperature = 1
         cur_retriever_loss = retriever_criterion(scores=pred_scores / score_temperature, positive_idx_per_question=positive_idx_per_question)
         # cur_retriever_esim_loss = retriever_criterion(scores=pred_esim_scores / 2e-2, positive_idx_per_question=positive_idx_per_question)
@@ -276,6 +286,7 @@ class ColBERT_List_qa(BaseModel):
         # kd_loss = torch.tensor(0.).to(cur_retriever_esim_loss.device)
         # if args.epoch <
         # kd_loss = kl_loss(y_pred=pred_scores / score_temperature * 5, y_true=pred_esim_scores / score_temperature * 5)
+        # return cur_retriever_loss, 0.01 * lce_loss,
         return cur_retriever_loss,
         # return cur_retriever_loss * 0, cur_retriever_esim_loss * 1
         # return cur_loss,

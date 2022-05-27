@@ -14,16 +14,11 @@ import hanlp
 from tqdm import tqdm
 
 
-
-
-
 # def get_segmenter():
 #     import jieba
 #     return jieba.cut
 
 # def sents_cut(sents):
-
-
 
 
 def pre_segment_collection():
@@ -172,8 +167,6 @@ def segment_generated_options():
     dump_json(res, "data/collection/filtered_options_segmented.json")
 
 
-
-
 def segment_medqa():
     medqa_dir = "/home2/zxhuang/python_workstation/DPR/data/MedQA/"
     output_dir = "/home2/awu/testcb/data/MedQA/"
@@ -261,12 +254,6 @@ def medqa_statistics():
     question_len, question_cut_len = list(zip(*corpus))
     print([(np.mean(question_len), np.std(question_len), np.percentile(question_len, ratio))])
     print([(np.mean(question_cut_len), np.std(question_cut_len), np.percentile(question_cut_len, ratio))])
-
-
-
-
-
-
 
 
 def test_reader():
@@ -401,19 +388,6 @@ def load_dureader_corpus():
         return corpus
 
 
-
-
-
-def read_dureader_dataset():
-    data_dir = "/home2/awu/testcb/data/dureader/dureader-retrieval-baseline-dataset/"
-    data = csv_reader(data_dir + "/train/dual.train.tsv")
-    train = defaultdict(lambda: defaultdict(set))
-    for query, _, pos, _, neg, _ in data:
-        train[query]['pos'].add(pos)
-        train[query]['neg'].add(neg)
-    return train
-
-
 def segment_dureader_dataset():
     global segmenter
     output_dir = "/home2/awu/testcb/data/dureader/"
@@ -487,7 +461,7 @@ if __name__ == '__main__':
     # segment_medqa()
     # segment_dureader()
     # test_reader()
-    index_dureader()
+    # index_dureader()
     # segment_medqa_dataset()
     # segment_dureader_merge()
     # test_load_dureader()

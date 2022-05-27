@@ -46,7 +46,7 @@ def get_dureader_ori_corpus():
     medqa_dir = "/home2/awu/testcb/data/dureader/dureader-retrieval-baseline-dataset/passage-collection/"
     sents = []
     for i in range(0, 4):
-        idx = (i + 1) * 100
+        # idx = (i + 1) * 100
         corpus_file = medqa_dir + f"part-0{i}"
         print(i)
         # tsents = pd.read_csv(corpus_file, delimiter='\t', header=None, error_bad_lines=True, usecols=[2], dtype={'passage_text': "string"}, names=['passage_text'])['passage_text']
@@ -55,9 +55,9 @@ def get_dureader_ori_corpus():
         # tsents = tsents.astype("string")
         for sent in tqdm(tsents):
             # print(sent)
-            if pd.isna(sent):
-                sent = f"nan {idx}"
-                idx += 1
+            # if pd.isna(sent):
+            #     sent = f"nan {idx}"
+            #     idx += 1
                 # print(sent)
             sents.append(sent)
     return sents
@@ -121,7 +121,7 @@ def gen_dev():
     dureader_dir = "/home2/awu/testcb/data/dureader/dureader-retrieval-baseline-dataset/"
     dev_data = load_json(dureader_dir + "/dev/dev.json", line=True)
     dev_aux_data = csv_reader(dureader_dir + "auxiliary/dev.retrieval.top50.res.tsv")
-    corpus_dict = load_dureader_seg_ori_map()
+    # corpus_dict = load_dureader_seg_ori_map()
     dev_aux_dic = defaultdict(list)
     for t in dev_aux_data:
         query, passage = t[0], t[2]
@@ -136,8 +136,10 @@ def gen_dev():
         neg = [_ for _ in dev_aux_dic[t['question']] if _ not in set(pos)]
         dev.append({
             "question": t['question'],
-            "positive_ctxs": [corpus_dict[_.strip()] for _ in pos],
-            "hard_negative_ctxs": [corpus_dict[_.strip()] for _ in neg],
+            # "positive_ctxs": [corpus_dict[_.strip()] for _ in pos],
+            # "hard_negative_ctxs": [corpus_dict[_.strip()] for _ in neg],
+            "positive_ctxs": pos,
+            "hard_negative_ctxs": neg,
         })
     dump_json(dev, "/home2/awu/testcb/data/dureader/dev.json")
 
@@ -220,18 +222,19 @@ def test_dureader():
 def test_to_submit():
     dureader_corpus_dir = "/home2/awu/testcb/data/dureader/dureader-retrieval-baseline-dataset/passage-collection/"
     passage_id_map = load_json(dureader_corpus_dir + "passage2id.map.json")
-    all_segmented = load_all_paras_dureader()
+    all_segmented = get_dureader_ori_corpus()
     seg_dict = {}
     for i, seg in enumerate(all_segmented):
-        seg_dict[seg] = str(i)
+        seg_dict[seg] = i
 
     test_res = load_json("data/bm25/sorted/temp_weight.json")
     test_ori = load_json("/home2/awu/testcb/data/dureader/dureader-retrieval-test1/test1.json", line=True)
     output = {}
     for t, t_ori in tqdm(zip(test_res, test_ori)):
         output[t_ori['question_id']] = [
-            passage_id_map[seg_dict[_['paragraph_cut']]]
-            for _ in t['res']
+            # passage_id_map[str(min(len(passage_id_map), int(seg_dict[_['paragraph_cut']] + 1)))]
+            passage_id_map[str(seg_dict[_['paragraph_cut']])]
+            for _ in t['res'][:50]
         ]
 
     dump_json(output, "data/test_res.json")
@@ -245,6 +248,29 @@ def test_to_submit_short():
     dump_json(res, "data/test_res.json")
 
 
+def read_dureader_train():
+    data_dir = "/home2/awu/testcb/data/dureader/dureader-retrieval-baseline-dataset/"
+    data = csv_reader(data_dir + "/train/dual.train.tsv")
+    train = defaultdict(lambda: defaultdict(set))
+    for query, _, pos, _, neg, _ in data:
+        train[query]['pos'].add(pos)
+        train[query]['neg'].add(neg)
+    train_data = []
+    for k, v in list(train.items()):
+        train_data.append({
+            "question": k,
+            "positive_ctxs": list(v['pos']),
+            "hard_negative_ctxs": list(v['neg'])
+        })
+    dump_json(train_data, "/home2/awu/testcb/data/dureader/train.json")
+    gen_dev()
+
+def read_dureader_test():
+    # get_segmenter()
+    test_data = load_json("/home2/awu/testcb/data/dureader/dureader-retrieval-test1/test1.json", line=True)
+    data = [{'question': _['question']} for _ in test_data]
+    dump_json(data, "/home2/awu/testcb/data/dureader/test.json")
+
 if __name__ == '__main__':
     # from torch.multiprocessing import Pool, set_start_method
     #
@@ -257,7 +283,11 @@ if __name__ == '__main__':
     # segment_test()
     # check_pt_doclen()
     # test_dureader()
-    test_to_submit_short()
+    # read_dureader_test()
+    pass
+    # test_to_submit_short()
+    test_to_submit()
     # gen_dev()
+    # read_dureader_train()
     # cut_questions_for_train_dev()
     # dureader_word_stat()

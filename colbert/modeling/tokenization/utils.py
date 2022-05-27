@@ -35,9 +35,12 @@ class CostomTokenizer(encoder_tokenizer):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.doc_cache = {}
+        from conf import QView, DView
         self.query_cache = {}
         if pretrain_choose.find("bert") != -1:
-            self.add_special_tokens({"additional_special_tokens": ["[unused1]", "[unused2]"]})
+            self.add_special_tokens({"additional_special_tokens": [f"[unused{i}]" for i in range(1, QView + DView + 1)]})
+            self.q_makers = ''.join([f"[unused{i}]" for i in range(1, QView + 1)])
+            self.d_makers = ''.join([f"[unused{i}]" for i in range(QView + 1, QView + DView + 1)])
         self.dpr_tokenizer = SimpleTokenizer()
         # self.ignore_words = set(list(string.punctuation) + [Q_marker_token, D_marker_token])
         self.ignore_words = {SEP} | puncts
@@ -59,11 +62,12 @@ class CostomTokenizer(encoder_tokenizer):
         # self.tokenize_d_segmented_dict = self.tokenize_d_segmented_dict_medqa
         self.tokenize_q_noopt_segmented_dict = self.tokenize_q_noopt_segmented_dict_medqa
         self.tokenize_d_segmented_dict = self.tokenize_d_segmented_dict_medqa
-        # self.tokenize_parts =
+        self.tokenize_parts = self.tokenize_multiple_view
 
-    @property
-    def tokenize_parts(self):
-        return self.tokenize_multiple_parts_tok if not use_word else self.tokenize_multiple_parts_tok_avg
+    # @property
+    # def tokenize_parts(self):
+    # return self.tokenize_multiple_parts_tok if not use_word else self.tokenize_multiple_parts_tok_avg
+    # return self.tokenize_multiple_view
 
     def truncate_seq(self, tokens_list: List[List[Any]], max_len, keep=None, stategy="longest"):
         if stategy != "longest":
@@ -329,6 +333,28 @@ class CostomTokenizer(encoder_tokenizer):
         #     (len(input_ids), len(attention_mask), len(active_padding), len(active_indices))
         # return input_ids, attention_mask, word_ids, ignore_word_indices
 
+    def tokenize_multiple_view(self, parts=None, max_seq_length=None, is_query=False, is_indexing=False):
+        # words = CLS + (self.q_makers if is_query else self.d_makers) + parts + SEP
+        words = [((self.q_makers if is_query else self.d_makers) + _ + SEP) for _ in parts]
+        # ignore_word_indices = [i for i, w in enumerate(words) if w in self.ignore_words]
+        inputs = self.batch_encode_plus(words,
+                                        # padding='max_length',
+                                        padding='longest' if not is_indexing else "max_length",
+                                        max_length=max_seq_length,
+                                        truncation=True,
+                                        add_special_tokens=False)
+
+        input_ids = inputs['input_ids']
+        # print(self.batch_decode(input_ids))
+        # input()
+        attention_mask = inputs['attention_mask']
+        # active_len = sum(attention_mask)
+        # active_indices = list(range(active_len)) + [0] * (max_seq_length - active_len)
+        # active_padding = [1] * active_len + [0] * (max_seq_length - active_len)
+        # word_ids = inputs.word_ids()
+        # return input_ids, attention_mask, active_indices, active_padding
+        return input_ids, attention_mask
+
     def tokenize_multiple_parts_tok_avg_(self, parts=None, max_seq_length=None, weights=None, generation_ending_token_idx=None, keep=(),
                                          marker_token=None, add_special_tokens=True, prefix=None, output_real=True, max_span_length=None):
         assert len(weights) == len(parts)
@@ -461,20 +487,21 @@ class CostomTokenizer(encoder_tokenizer):
 
     def tokenize_q_noopt_segmented_dict_medqa(self, batch_examples, max_seq_length):
         q = []
-
+        questions = []
         for t in batch_examples:
-            question = t['question_cut'].split()
+            # question = ''.join(t['question_cut'].split())
+            question = t['question']
             # enum = [question, option, background]
-            enum = [question]
-            output = self.tokenize_parts(parts=enum, max_seq_length=max_seq_length, weights=[1] * len(enum),
-                                         generation_ending_token_idx=None, keep=[2], marker_token=Q_marker_token, max_span_length=query_max_span_length)
-            q.append(output)
+            # enum = [question]
+            questions.append(question)
+        q = self.tokenize_parts(parts=questions, max_seq_length=max_seq_length, is_query=True)
+        # q.append(output)
 
-            # return doc_tokens, doc_words, tok_to_orig_seg_map, word_pos0_mask
+        # return doc_tokens, doc_words, tok_to_orig_seg_map, word_pos0_mask
         # for t in [q, ans, title]:
         #     t[1] = np.array(t[1])
         # return [[torch.tensor(_) for _ in t] for t in [q, ans, title]]
-        q = list(zip(*q))
+        # q = list(zip(*q))
         return [torch.tensor(_) for i, _ in enumerate(q)]
 
     def tokenize_d_segmented_dict_medqa(self, batch_text, max_seq_length, tqdm_enable=False, to_tensor=True, word=False):
@@ -482,21 +509,23 @@ class CostomTokenizer(encoder_tokenizer):
         d = []
         # batch_text = tqdm(batch_text, disable=len(batch_text) < 1000)
         # all_doc_segments = []
+        docs = []
         for t in batch_text:
             # print(t)
             # if 'paragraph_cut' in t:
             #     doc = [t["paragraph_cut"].split()]
             # else:
             #     doc = [t["text_cut"].split()]
-            doc = [t.split()]
-            output = self.tokenize_parts(parts=doc, max_seq_length=max_seq_length, weights=[1] * len(doc),
-                                         generation_ending_token_idx=None, keep=[], marker_token=D_marker_token, output_real=to_tensor,
-                                         max_span_length=doc_max_span_length)
-            d.append(output)
+            # doc = [t.split()]
+            # doc = t['paragraph']
+            doc = t
+            docs.append(doc)
+        d = self.tokenize_parts(parts=docs, max_seq_length=max_seq_length, is_query=False, is_indexing=not to_tensor)
+        # d.append(output)
         # d[1] = np.array(d[1])
         if to_tensor:
             # return [torch.tensor(_) for _ in d]
-            d = list(zip(*d))
+            # d = list(zip(*d))
             # return [(torch.tensor(_) if i != 100 else _) for i, _ in enumerate(d)]
             return [torch.tensor(_) for i, _ in enumerate(d)]
         else:

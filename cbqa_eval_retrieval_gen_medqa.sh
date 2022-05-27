@@ -5,7 +5,8 @@ gpu='6,7'
 #gpu='2,3,4'
 #gpu='0,1,2'
 #gpu='2,3,4'
-gpu='1'
+gpu='4,3,2
+'
 #index_gpu="1,2,3,4"
 server_gpu="1"
 #gpu='2'
@@ -49,7 +50,7 @@ GIT_PYTHON_REFRESH=quiet CUDA_LAUNCH_BLOCKING=1 OMP_NUM_THREADS=1 TOKENIZERS_PAR
 python -m torch.distributed.launch --nproc_per_node="$gpunum" --master_port 47799 -m colbert.train_cbqa_retrieval_gen_medqa \
     --amp \
     --do_train \
-    --batch_size 12 \
+    --batch_size 26 \
     --epoch 20 \
     --retriever_lr 3e-5 \
     --lr 3e-5 \
@@ -77,7 +78,7 @@ index_model() {
   GIT_PYTHON_REFRESH=quiet CUDA_LAUNCH_BLOCKING=1 OMP_NUM_THREADS=1 TOKENIZERS_PARALLELISM=true \
     CUDA_VISIBLE_DEVICES=$gpu python -m torch.distributed.launch --master_port 47799 --nproc_per_node=$gpunum -m  colbert.training.index_model \
     --amp \
-    --bsize 224 \
+    --bsize 384 \
     --checkpoint $output_dir \
     --collection $corpus_path \
     --index_path $index_path \
@@ -108,7 +109,7 @@ eval_metric_for_model(){
     --amp \
     --do_eval \
     --checkpoint $output_dir/pytorch.bin \
-    --batch_size 4 \
+    --batch_size 32 \
     --index_path $index_path/
 }
 

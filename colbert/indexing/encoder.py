@@ -13,6 +13,8 @@ import os
 
 from tqdm import tqdm
 
+from proj_utils.dureader_utils import get_dureader_ori_corpus
+
 os.environ['TOKENIZERS_PARALLELISM'] = 'true'
 from colbert.modeling.tokenization.doc_tokenization import DocTokenizer
 from awutils.file_utils import load_json, dump_json
@@ -30,14 +32,15 @@ doc_tokenizer = DocTokenizer(doc_maxlen)
 
 
 def pre_tensorize(examples):
-    res = doc_tokenizer.tensorize_dict([examples], to_tensor=False)[0]
+    res = [_[0] for _ in doc_tokenizer.tensorize_dict([examples], to_tensor=False)]
     return res
 
 
 class BatchGenerator:
-    collection = load_all_paras()[:]
+    collection = get_dureader_ori_corpus()
 
     def __init__(self, part, rank, nranks):
+        # BUF_SIZE = 64
         BUF_SIZE = 1024
         self.part = part
         self.rank = rank
@@ -45,7 +48,7 @@ class BatchGenerator:
         self.q = queue.Queue(BUF_SIZE)
         collection = self.collection
         split_num = 12
-        self.bs = 1024
+        self.bs = 2048
         print("collection total:", len(collection))
         part_len = math.ceil(len(collection) / split_num)
         # for part in range(12):
@@ -66,9 +69,10 @@ class BatchGenerator:
         bs = self.bs
         sub_collection = self.sub_collection
         # print("rank_collection total:", len(sub_collection))
+        from contextlib import closing
         for i in range(0, len(sub_collection), bs):
             batch_data = sub_collection[i:i + bs]
-            with Pool(4) as p:
+            with closing(Pool(4)) as p:
                 res = list(p.imap(pre_tensorize, batch_data))
             # while q.full():
             #     pass
@@ -140,7 +144,7 @@ class CollectionEncoder:
         self.inference = ModelInference(self.colbert, amp=self.args.amp, segmenter=None, query_maxlen=self.args.query_maxlen, doc_maxlen=self.args.doc_maxlen)
 
     def encode_simple(self):
-        for i in range(6, 12):
+        for i in range(0, 12):
             barrier(self.args.rank)
             # self.iterator = self._initialize_iterator(part=i)
             batch_generator = BatchGenerator(part=i, rank=self.args.rank, nranks=self.args.nranks)
@@ -152,6 +156,7 @@ class CollectionEncoder:
                     embs += batch_embs
                     # doclens += [sum(_[-1]) for _ in batch]
                     doclens += [d.size(0) for d in batch_embs]
+                    del batch
                     pbar.update(1)
             embs = torch.cat(embs)
             base_dir = "/home2/awu/testcb/"
@@ -159,6 +164,9 @@ class CollectionEncoder:
             torch.save(embs, f"/home2/awu/testcb/data/dureader/temp/{self.args.rank}.pt")
             # torch.save(embs, f"/home2/awu/testcb/data/dureader/temp/{self.args.rank}_doclens.pt")
             dump_json(doclens, f"/home2/awu/testcb/data/dureader/temp/{self.args.rank}_doclens.json")
+            del embs
+            del doclens
+            gc.collect()
             barrier(self.args.rank)
             if self.args.rank == 0:
                 all_embs = []
@@ -186,9 +194,9 @@ class CollectionEncoder:
                 with open(doclens_path, 'w') as output_doclens:
                     ujson.dump(doclens, output_doclens)
             # del self.iterator
-            del embs
-            del doclens
-            gc.collect()
+                del embs
+                del doclens
+                gc.collect()
             barrier(self.args.rank)
 
         metadata_path = os.path.join(self.args.index_path, 'metadata.json')
