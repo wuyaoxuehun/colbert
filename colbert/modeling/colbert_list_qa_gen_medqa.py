@@ -206,7 +206,7 @@ class ColBERT_List_qa(BaseModel):
             # Q = F.normalize(Q, p=2, dim=-1)
             t2 = time.time()
             # d_paras = model_helper.retrieve_for_encoded_queries(Q, q_word_mask=q_active_padding, retrieve_topk=eval_p_num, model=self)
-            d_paras = model_helper.retrieve_for_encoded_queries(Q, q_word_mask=torch.ones(Q.size(0), 1), retrieve_topk=eval_p_num, model=self)
+            d_paras = model_helper.retrieve_for_encoded_queries(Q, q_word_mask=torch.ones(Q.size(0), QView), retrieve_topk=eval_p_num, model=self)
             train_dataset.merge_to_reader_input(batch, d_paras)
             t3 = time.time()
             # print(t2-t1, t3-t2)

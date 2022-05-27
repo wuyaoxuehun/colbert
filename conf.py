@@ -42,7 +42,7 @@ index_type = "cblist"
 dim = 768
 # faiss_depth, nprobe = 256, 128
 # faiss_depth, nprobe = 512, 32
-faiss_depth, nprobe = 2048, 1024
+faiss_depth, nprobe = 1024, 512
 # 256, 128
 len_dir_dic = {
     # 'rougelr': lambda ds_type, idx: f"data/bm25/sorted/{ds_type}_{idx}_rougelr_0.8_0.3_sorted.json",
