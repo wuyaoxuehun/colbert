@@ -1,6 +1,5 @@
 #!/bin/bash
 command=$1
-gpu='6,7'
 gpu='0,2,3,4'
 IFS=','
 read -ra arr <<< "$gpu"
