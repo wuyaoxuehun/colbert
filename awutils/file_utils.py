@@ -2,7 +2,7 @@ import json
 
 
 def load_json(file, line=False):
-    print("loading json from " + file)
+    # print("loading json from " + file)
     if not line:
         res = json.load(open(file, 'r', encoding='utf8'))
     else:

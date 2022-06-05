@@ -1,16 +1,12 @@
-import sys
 import time
-import math
-import faiss
-import torch
 
-import numpy as np
+import faiss
 
 from colbert.indexing.faiss_index_gpu import FaissIndexGPU
 from colbert.utils.utils import print_message
-import faiss
 
-class FaissIndex():
+
+class FaissIndexing:
     def __init__(self, dim, partitions):
         self.dim = dim
         self.partitions = partitions

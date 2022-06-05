@@ -12,7 +12,7 @@ import numpy as np
 from colbert.utils.utils import print_message
 
 
-class FaissIndexGPU():
+class FaissIndexGPU:
     def __init__(self):
         self.ngpu = faiss.get_num_gpus()
 

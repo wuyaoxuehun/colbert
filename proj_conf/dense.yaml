@@ -1,0 +1,20 @@
+dense_training_args:
+  do_train: true
+  do_eval: true
+  score_temperature: 2e-2
+  pretrain_name: "bert"
+  query_maxlen: 32
+  doc_maxlen: 320
+  dim: 128
+  train_task: "dureader-train-0"
+  dev_task: "dureader-dev-0"
+  test_task: "dureader-test-0"
+  device: "cuda"
+dense_index_args:
+  collection: ??
+  amp: true
+  bsize: 384
+  checkpoint: "./temp/checkpoint-7720"
+  index_path: "/home2/awu/testcb/index/colbert/"
+faiss_index_args:
+  faiss_type: "colbert"

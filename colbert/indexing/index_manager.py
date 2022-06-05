@@ -1,12 +1,8 @@
 import torch
-import faiss
-import numpy as np
-
-from colbert.utils.utils import print_message
 
 
-class IndexManager():
-    def __init__(self, dim):
+class IndexManager:
+    def __init__(self, dim=None):
         self.dim = dim
 
     def save(self, tensor, path_prefix):

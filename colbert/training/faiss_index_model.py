@@ -1,47 +1,24 @@
 import logging
-import math
-
-from transformers.utils.logging import set_verbosity_error
-
-from colbert.indexing.loaders import load_doclens
-# from colbert.modeling.colbert_list_qa import ColBERT_List_qa
-from colbert.indexing.myfaiss import index_faiss_simple
-from colbert.utils.parser import Arguments
-from conf import dim
-
-set_verbosity_error()
-logger = logging.getLogger("__main__")
-
-
-def get_best_partitons(num_embeddings):
-    # partitions = 1 << math.ceil(math.log2(8 * math.sqrt(num_embeddings)))
-    partitions = 1 << round(math.log2(8 * math.sqrt(num_embeddings)))
-    print('\n\n')
-    print("You did not specify --partitions!")
-    print(f'''Default computation chooses {partitions} partitions (for {num_embeddings} embeddings)''')
-    print('\n\n')
-    return partitions
-
+import os
+from colbert.utils.dense_conf import load_dense_conf
+logging.basicConfig(format="%(asctime)s - %(levelname)s - %(name)s -   %(message)s", datefmt="%m/%d/%Y %H:%M:%S",
+                    level=logging.INFO if int(os.environ.get('LOCAL_RANK', 0)) in [-1, 0] else logging.WARN)
+logger = logging.getLogger(__name__)
 
 def faiss_index_by_encoded(args):
-    num_embeddings = sum(load_doclens(args.index_path))
-    print("#> num_embeddings =", num_embeddings)
-    # if args.partitions is None:
-    args.partitions = get_best_partitons(num_embeddings)
-    print('best partitions = ', args.partitions)
-    if False:
+    index_path = args.dense_index_args.index_path
+    faiss_type = args.faiss_index_args.faiss_type
+    if faiss_type == "dpr":
         from colbert.indexing.faiss_indexers import DPRRetriever
-        dpr_retriever = DPRRetriever(index_path=args.index_path, dim=dim)
-        dpr_retriever.encode_corpus(encoded_corpus_path=args.index_path)
+        dpr_retriever = DPRRetriever(index_path=index_path, dim=args.dense_training_args.dim)
+        dpr_retriever.encode_corpus(encoded_corpus_path=index_path)
     else:
         # index_faiss_simple(args)
         from colbert.indexing.faiss_indexers import ColbertRetriever
-        retriever = ColbertRetriever(index_path=args.index_path, dim=dim, rank=None, index_config=None, partitions=args.partitions, sample=args.sample)
-        retriever.encode_corpus(encoded_corpus_path=args.index_path)
+        retriever = ColbertRetriever(index_path=index_path)
+        retriever.encode_corpus(encoded_corpus_path=index_path)
 
 
 if __name__ == '__main__':
-    parser = Arguments(description='Faiss indexing for end-to-end retrieval with ColBERT.')
-    parser.add_index_model_input()
-    args = parser.parse()
+    args = load_dense_conf()
     faiss_index_by_encoded(args)

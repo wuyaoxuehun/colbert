@@ -1,6 +1,5 @@
 # import faiss_indexers
 import logging
-from multiprocessing.connection import Client
 from typing import Dict, List
 
 import torch.distributed
@@ -10,18 +9,13 @@ from transformers import BertPreTrainedModel, BertModel, BertConfig
 from colbert.modeling.BaseModel import BaseModel
 from colbert.training.losses import BiEncoderNllLoss
 from colbert.utils.dense_conf import context_random
-from proj_utils.dureader_utils import get_dureader_ori_corpus
 
 torch.multiprocessing.set_sharing_strategy("file_system")
 # torch.multiprocessing.set_start_method('spawn', force=True)
-from colbert.training.training_utils import qd_mask_to_realinput, collection_qd_masks
+from colbert.training.training_utils import collection_qd_masks
 from colbert.modeling.tokenizers import CostomTokenizer
 
 logger = logging.getLogger("__main__")
-
-
-# import pydevd_pycharm
-# pydevd_pycharm.settrace('114.212.84.202', port=8899, stdoutToServer=True, stderrToServer=True)
 
 
 def get_mrr(scores):
@@ -89,7 +83,7 @@ class ColbertModel(BaseModel):
         if is_evaluating:
             # return get_mrr(pred_scores),
             return {"loss": get_mrr(pred_scores)}
-        score_temperature = 1e-2
+        score_temperature = self.args.score_temperature
         cur_retriever_loss = BiEncoderNllLoss(scores=pred_scores / score_temperature, positive_idx_per_question=positive_idx_per_question)
         return {"loss": cur_retriever_loss}
 

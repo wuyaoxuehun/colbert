@@ -1,22 +1,17 @@
 import os
 import sys
+from multiprocessing.connection import Listener, Client
 
 import numpy as np
 import torch
-
-# from corpus_cb import load_all_paras
 from tqdm import tqdm
 
 from awutils.file_utils import load_json, dump_json
 from colbert.indexing.faiss_indexers import ColbertRetriever, DPRRetriever
-from colbert.modeling.colbert import ColbertModel
+from colbert.modeling.colbert_model import ColbertModel
 from colbert.training.training_utils import qd_mask_to_realinput
 # QueryData = namedtuple("QueryData", ["question", "topk", "faiss_depth", "nprobe"])
 from colbert.utils.dense_conf import load_dense_conf, data_dir_dic
-from multiprocessing.connection import Listener, Client
-from multiprocessing import Manager
-from threading import Thread
-
 from proj_utils.dureader_utils import get_dureader_ori_corpus
 
 os.environ["CUDA_VISIBLE_DEVICES"] = "2,3,4"
@@ -134,6 +129,7 @@ def dureader_evaluate():
 
     # eval_for_dev()
     test_to_submit()
+
 
 def OBQAEvaluate():
     # todo
