@@ -9,7 +9,7 @@ echo "GPUNUM: "$gpunum
 
 train(){
 GIT_PYTHON_REFRESH=quiet CUDA_LAUNCH_BLOCKING=1 OMP_NUM_THREADS=1 TOKENIZERS_PARALLELISM=true CUDA_VISIBLE_DEVICES="$gpu" \
-python -m torch.distributed.launch --nproc_per_node="$gpunum" --master_port 47799 -m colbert.train_cbqa_retrieval_gen_medqa \
+python -m torch.distributed.launch --nproc_per_node="$gpunum" --master_port 47799 -m colbert.train_colbert \
     --output_dir ./temp \
     --report_to mlflow \
     --learning_rate 3e-5 \
