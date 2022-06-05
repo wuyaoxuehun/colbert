@@ -16,8 +16,6 @@ def main():
     args.dense_training_args.pretrain = pretrain_map[args.dense_training_args.pretrain_name]
     if args.dense_training_args.do_train:
         train(args, trainer_args)
-    if args.dense_training_args.do_eval:
-        eval_retrieval_for_model(args)
 
 
 if __name__ == "__main__":

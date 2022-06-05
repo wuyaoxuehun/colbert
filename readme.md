@@ -1,4 +1,4 @@
-##ColBERT
+#ColBERT
 环境
 ```shell
 #pip install -r requirements.txt
@@ -26,7 +26,7 @@ conda env create -f environment.yaml [-p /data/anaconda/env/vir_base]
 ```
 以上过程针对dureader中文数据集。\
 模型非训练使用参数位于 **colbert/proj_conf/dense.yaml** \
-加载参数代码位于 **colbert/utils/dense_conf.py**
+加载参数代码位于 **colbert/utils/dense_conf.py** \
 训练验证文件格式
 ```json
 [{

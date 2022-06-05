@@ -1,19 +1,12 @@
 import logging
-from typing import List, Dict
-import torch
+
 from torch.utils.data import Dataset
+
 from awutils.file_utils import load_json
-from colbert.modeling.tokenizers import CostomTokenizer
-from colbert.utils.dense_conf import data_dir_dic, context_random
+from colbert.utils.dense_conf import data_dir_dic
 
 logger = logging.getLogger("__main__")
 
-
-# def collate_fun():
-#     def fun(batch):
-#         return batch
-#
-#     return fun
 def collate_fun(batch):
     return {"batch": batch}
 
