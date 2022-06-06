@@ -11,25 +11,29 @@ class BaseModel(nn.Module):
         super().__init__()
         self.model = None
         self.linear = None
-        self.get_representation = self.get_representation_whole
+        self.args = None
+        self.get_representation = self.get_representation
 
     @property
     def encoder(self):
         return self.model
 
-    def get_representation_whole(self, t):
+    def get_representation(self, t, is_query):
+        if self.args.enable_multiview:
+            view_num = self.args.dense_multiview_args.q_view if is_query else self.args.dense_multiview_args.d_view
+            t = t[:, :view_num, ...]
         t = self.linear(t)
         t = torch.nn.functional.normalize(t, p=2, dim=2)
         return t
 
     def query(self, input_ids, attention_mask, active_indices=None, active_padding=None, **kwargs):
         output = self.encoder(input_ids, attention_mask=attention_mask, return_dict=True, output_hidden_states=True).hidden_states[-1]
-        Q = self.get_representation(output)
+        Q = self.get_representation(output, is_query=True)
         return Q
 
     def doc(self, input_ids, attention_mask, active_indices=None, active_padding=None, **kwargs):
         output = self.encoder(input_ids, attention_mask=attention_mask, return_dict=True, output_hidden_states=True).hidden_states[-1]
-        D = self.get_representation(output)
+        D = self.get_representation(output, is_query=False)
         return D
 
     @staticmethod

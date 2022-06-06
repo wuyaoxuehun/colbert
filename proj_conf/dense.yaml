@@ -5,7 +5,7 @@ dense_training_args:
   pretrain_name: "bert"
   query_maxlen: 32
   doc_maxlen: 320
-  dim: 128
+  dim: 768
   train_task: "dureader-train-0"
   dev_task: "dureader-dev-0"
   test_task: "dureader-test-0"
@@ -18,3 +18,7 @@ dense_index_args:
   index_path: "/home2/awu/testcb/index/colbert/"
 faiss_index_args:
   faiss_type: "colbert"
+enable_multiview: true
+dense_multiview_args:
+  q_view: 8
+  d_view: 14

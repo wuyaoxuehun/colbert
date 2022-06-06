@@ -103,7 +103,7 @@ class CollectionEncoder:
         self.indexmgr = IndexManager()
         # self.iterator = None
         self.amp_manager = MixedPrecisionManager(True)
-        init_doc_tokenizer(args.dense_training_args)
+        init_doc_tokenizer(args)
 
     def encode_simple(self):
         for i in range(0, split_num):

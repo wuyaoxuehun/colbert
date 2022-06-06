@@ -1,3 +1,4 @@
+import logging
 from typing import Union, Any, Optional, Tuple
 from torch.cuda.amp import autocast
 from transformers import ProgressCallback
@@ -6,8 +7,8 @@ from colbert.modeling.colbert_model import *
 from colbert.training.colbert_dataset import ColbertDataset, collate_fun
 from colbert.training.training_utils import *
 
-logger = logging.getLogger(__name__)
-
+# logger = logging.getLogger(__name__)
+logger = logging.getLogger("transformers")
 
 class MyProgressCallback(ProgressCallback):
     """
@@ -46,7 +47,7 @@ class ColbertTrainer(AWTrainer):
 
 
 def train(args, trainer_args):
-    model = ColbertModel(args.dense_training_args)
+    model = ColbertModel(args)
     train_dataset = ColbertDataset(args.dense_training_args, task=args.dense_training_args.train_task)
     eval_dataset = ColbertDataset(args.dense_training_args, task=args.dense_training_args.dev_task)
     trainer = ColbertTrainer(model=model, args=trainer_args, train_dataset=train_dataset, eval_dataset=eval_dataset, data_collator=collate_fun,

@@ -40,9 +40,13 @@ class ColbertModel(BaseModel):
     def __init__(self, args):
         super().__init__()
         self.args = args
-        self.config: BertConfig = BertConfig.from_pretrained(args.pretrain)
-        self.model = BertModel.from_pretrained(args.pretrain)
-        self.linear = nn.Linear(self.config.hidden_size, args.dim, bias=False)
+        pretrain = args.dense_training_args.pretrain
+        dim = args.dense_training_args.dim
+        self.score_temperature = args.dense_training_args.score_temperature
+        self.config: BertConfig = BertConfig.from_pretrained(pretrain)
+        self.model = BertModel.from_pretrained(pretrain)
+        # if not self.args.enable_multiview:
+        self.linear = nn.Linear(self.config.hidden_size, dim, bias=False)
         self.tokenizer = CostomTokenizer(args)
 
     def tokenize_for_retriever(self, batch):
@@ -77,13 +81,15 @@ class ColbertModel(BaseModel):
         d = self.tokenize_for_train_retriever(batch, is_evaluating=is_evaluating)
         d_ids, d_attention_mask, d_active_padding, *_ = [_.cuda() for _ in d]
         D = self.doc(d_ids, d_attention_mask)
+        # input((Q.size(), D.size(), q_active_padding.size(), d_active_padding.size()))
         Q, q_active_padding, D, d_active_padding = collection_qd_masks([Q, q_active_padding, D, d_active_padding])
+
         positive_idx_per_question = torch.tensor([_ * 2 for _ in range(Q.size(0))], device=Q.device)
         pred_scores = self.score(Q, D, q_active_padding, d_active_padding)
         if is_evaluating:
             # return get_mrr(pred_scores),
             return {"loss": get_mrr(pred_scores)}
-        score_temperature = self.args.score_temperature
+        score_temperature = self.score_temperature
         cur_retriever_loss = BiEncoderNllLoss(scores=pred_scores / score_temperature, positive_idx_per_question=positive_idx_per_question)
         return {"loss": cur_retriever_loss}
 
