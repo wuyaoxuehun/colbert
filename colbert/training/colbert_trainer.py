@@ -1,28 +1,17 @@
 import logging
 from typing import Union, Any, Optional, Tuple
+
+import os
 from torch.cuda.amp import autocast
-from transformers import ProgressCallback
+from transformers import ProgressCallback, DefaultFlowCallback
 from awutils.awtrainer import AWTrainer
+from awutils.mytrainer_callbacks import MyProgressCallback, MyDefaultFlowCallback
 from colbert.modeling.colbert_model import *
 from colbert.training.colbert_dataset import ColbertDataset, collate_fun
 from colbert.training.training_utils import *
 
 # logger = logging.getLogger(__name__)
 logger = logging.getLogger("transformers")
-
-class MyProgressCallback(ProgressCallback):
-    """
-    A :class:`~transformers.TrainerCallback` that displays the progress of training or evaluation.
-    """
-
-    def __init__(self):
-        super().__init__()
-
-    def on_step_end(self, args, state, control, **kwargs):
-        if state.is_local_process_zero:
-            self.training_bar.update(state.global_step - self.current_step)
-            self.current_step = state.global_step
-            self.training_bar.set_postfix({"train_loss": "%.4f" % float(state.train_avg_loss)})
 
 
 class ColbertTrainer(AWTrainer):
@@ -48,10 +37,35 @@ class ColbertTrainer(AWTrainer):
 
 def train(args, trainer_args):
     model = ColbertModel(args)
-    train_dataset = ColbertDataset(args.dense_training_args, task=args.dense_training_args.train_task)
-    eval_dataset = ColbertDataset(args.dense_training_args, task=args.dense_training_args.dev_task)
+    # model.load("./temp/checkpoint/checkpoint-6360/pytorch_model.bin")
+    train_dataset = ColbertDataset(task=args.dense_training_args.train_task)
+    eval_dataset = ColbertDataset(task=args.dense_training_args.dev_task)
     trainer = ColbertTrainer(model=model, args=trainer_args, train_dataset=train_dataset, eval_dataset=eval_dataset, data_collator=collate_fun,
                              callbacks=[])
     trainer.remove_callback(ProgressCallback)
+    trainer.remove_callback(DefaultFlowCallback)
     trainer.add_callback(MyProgressCallback)
+    trainer.add_callback(MyDefaultFlowCallback)
     trainer.train()
+
+
+def evaluate(args, trainer_args):
+    model = ColbertModel(args)
+    eval_dataset = ColbertDataset(task=args.dense_training_args.dev_task)
+    trainer_args.per_device_eval_batch_size = 80
+    trainer = ColbertTrainer(model=model, args=trainer_args, eval_dataset=eval_dataset, data_collator=collate_fun,
+                             callbacks=[])
+    # checkpoints = os.listdir(trainer_args.output_dir)
+    checkpoint_dir = "./temp/checkpoint_colbert1/"
+    checkpoints = os.listdir(checkpoint_dir)
+    for checkpoint in checkpoints:
+        path = checkpoint_dir + checkpoint
+        # input(path)
+        # if os.path.isdir(checkpoint):
+        args.dense_training_args.checkpoint = path
+        if trainer_args.local_rank == 0:
+            print(args.dense_training_args.checkpoint)
+        model.load(checkpoint=path + "/pytorch_model.bin")
+        metrics = trainer.evaluate(eval_dataset=eval_dataset)
+        if trainer_args.local_rank == 0:
+            print(metrics)

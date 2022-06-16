@@ -51,8 +51,7 @@ conda env create -f environment.yaml [-p /data/anaconda/env/vir_base]
 加载数据集代码在 **colbert/proj_utils/dureader_utils.py->get_dureader_ori_corpus()**，可以修改为自己的数据集
 
 ## 使用multi-view版本
-* （参见论文 [Multi-View Document Representation Learning for Open-Domain Dense Retrieval
-,  ACL 2022](https://arxiv.org/abs/2203.08372) ), 这里不使用lce loss)
-\
+* 参见论文 [Multi-View Document Representation Learning for Open-Domain Dense Retrieval
+,  ACL 2022](https://arxiv.org/abs/2203.08372), 这里不使用lce loss
 * 设置 **proj_conf/dense.yaml** 中 **enable_multiview=true**
 

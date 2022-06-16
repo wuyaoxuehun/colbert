@@ -1262,6 +1262,7 @@ class AWTrainer:
                 for _ in train_dataloader:
                     break
 
+        last_epoch_tr_loss = 0
         for epoch in range(epochs_trained, num_train_epochs):
             if isinstance(train_dataloader, DataLoader) and isinstance(train_dataloader.sampler, DistributedSampler):
                 train_dataloader.sampler.set_epoch(epoch)
@@ -1282,7 +1283,6 @@ class AWTrainer:
                 len(epoch_iterator) if train_dataset_is_sized else args.max_steps * args.gradient_accumulation_steps
             )
             self.control = self.callback_handler.on_epoch_begin(args, self.state, self.control)
-            last_epoch_tr_loss = 0
             for step, inputs in enumerate(epoch_iterator):
 
                 # Skip past any already trained steps if resuming training
@@ -1374,6 +1374,7 @@ class AWTrainer:
                     model.zero_grad()
                     self.state.global_step += 1
                     self.state.epoch = epoch + (step + 1) / steps_in_epoch
+                    self.state.steps_in_epoch = steps_in_epoch
                     self.state.train_avg_loss = (tr_loss - last_epoch_tr_loss) / (step + 1)
                     self.control = self.callback_handler.on_step_end(args, self.state, self.control)
 

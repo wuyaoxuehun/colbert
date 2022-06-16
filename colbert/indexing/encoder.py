@@ -93,7 +93,7 @@ class CollectionEncoder:
         self.collection = args.dense_index_args.collection
         self.bsize = args.dense_index_args.bsize
         self.index_path = self.args.dense_index_args.index_path
-        self.colbert = ColbertModel(args.dense_training_args)
+        self.colbert = ColbertModel(args)
         self.colbert.load(args.dense_index_args.checkpoint + "/pytorch_model.bin")
         self.colbert = self.colbert.cuda()
         if args.distributed:
@@ -120,8 +120,9 @@ class CollectionEncoder:
                     del batch
                     pbar.update(1)
             embs = torch.cat(embs)
-            torch.save(embs, f"/home2/awu/testcb/data/dureader/temp/{self.args.rank}.pt")
-            dump_json(doclens, f"/home2/awu/testcb/data/dureader/temp/{self.args.rank}_doclens.json")
+            tmp_dir = "./tmp/"
+            torch.save(embs, f"{tmp_dir}/{self.args.rank}.pt")
+            dump_json(doclens, f"{tmp_dir}/{self.args.rank}_doclens.json")
             del embs
             del doclens
             gc.collect()
@@ -130,8 +131,8 @@ class CollectionEncoder:
                 all_embs = []
                 doclens = []
                 for j in range(self.args.nranks):
-                    all_embs.append(torch.load(f"/home2/awu/testcb/data/dureader/temp/{j}.pt"))
-                    doclens += load_json(f"/home2/awu/testcb/data/dureader/temp/{j}_doclens.json")
+                    all_embs.append(torch.load(f"{tmp_dir}/{j}.pt"))
+                    doclens += load_json(f"{tmp_dir}/{j}_doclens.json")
                 embs = torch.cat(all_embs, dim=0)
                 if not os.path.exists(self.index_path):
                     os.makedirs(self.index_path)
@@ -147,17 +148,17 @@ class CollectionEncoder:
                     ujson.dump(doclens, output_doclens)
                     logger.info(f"saved {doclens_path}")
                 # del self.iterator
-                del embs
-                del doclens
+                del embs, doclens
+                torch.cuda.empty_cache()
                 gc.collect()
             barrier(self.args.rank)
 
         metadata_path = os.path.join(self.index_path, 'metadata.json')
         logger.info("Saving (the following) metadata to" + metadata_path + "..")
-        logger.info(self.args.input_arguments)
-
-        with open(metadata_path, 'w') as output_metadata:
-            ujson.dump(self.args.input_arguments.__dict__, output_metadata)
+        # logger.info(self.args.input_arguments)
+        #
+        # with open(metadata_path, 'w') as output_metadata:
+        #     ujson.dump(self.args.input_arguments.__dict__, output_metadata)
 
     @torch.no_grad()
     def _encode_batch(self, tensorizes):

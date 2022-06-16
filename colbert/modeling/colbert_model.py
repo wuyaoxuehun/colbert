@@ -60,7 +60,7 @@ class ColbertModel(BaseModel):
                 # if len(t['positive_ctxs']) == 1:
                 #     t['positive_ctxs'].append(t['positive_ctxs'][-1])
                 cur_pos_docs = list(context_random.choice(t['positive_ctxs'][:], 1))
-                cur_neg_docs = list(context_random.choice(t['hard_negative_ctxs'][:], 1))
+                cur_neg_docs = list(context_random.choice(t['hard_negative_ctxs'][:50], 1))
             else:
                 if len(t['positive_ctxs']) < 2:
                     t['positive_ctxs'].append(t['positive_ctxs'][0])
@@ -68,7 +68,9 @@ class ColbertModel(BaseModel):
                 if len(cur_pos_docs) < 2:
                     cur_pos_docs.append(cur_pos_docs[-1])
                 assert len(t['hard_negative_ctxs']) >= 18
-                cur_neg_docs = list(t['hard_negative_ctxs'][10:18])
+                # cur_neg_docs = list(t['hard_negative_ctxs'][10:18])
+                # cur_neg_docs = list(t['hard_negative_ctxs'][5:5+8])
+                cur_neg_docs = list(t['hard_negative_ctxs'][:8])
             cur_docs = cur_pos_docs + cur_neg_docs
             docs += cur_docs
         D = self.tokenizer.tokenize_d(docs)

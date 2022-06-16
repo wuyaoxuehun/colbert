@@ -1,10 +1,8 @@
 import torch
 from transformers import HfArgumentParser
-
 from proj_conf.training_arguments import MyTraniningArgs
-
 print(torch.cuda.device_count())
-from colbert.training.colbert_trainer import *
+from colbert.training.ce_trainer import *
 from colbert.utils.dense_conf import *
 
 
@@ -13,11 +11,13 @@ def main():
     trainer_args, = parser.parse_args_into_dataclasses()
 
     args = OmegaConf.load("proj_conf/dense.yaml")
-    args.dense_training_args.pretrain = pretrain_map[args.dense_training_args.pretrain_name]
-    if args.dense_training_args.do_train:
+    args.dense_training_args.pretrain = pretrain_map[args.ce_training_args.pretrain_name]
+    if args.ce_training_args.do_train:
         train(args, trainer_args)
-    if args.dense_training_args.do_eval:
+    if args.ce_training_args.do_eval:
         evaluate(args, trainer_args)
+    if args.ce_training_args.do_test:
+        test(args, trainer_args)
 
 
 if __name__ == "__main__":

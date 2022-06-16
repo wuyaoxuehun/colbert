@@ -144,7 +144,15 @@ class ColbertIndex:
         print_message("#> Loading the FAISS index from", faiss_index_path, "..")
         self.faiss_index = faiss.read_index(faiss_index_path)
         res = faiss.StandardGpuResources()
-        # self.faiss_index = faiss.index_cpu_to_gpu(res, rank, self.faiss_index)
+        self.co = faiss.GpuClonerOptions()
+        self.co.useFloat16 = True
+        self.co.useFloat16CoarseQuantizer = False
+        self.co.usePrecomputed = False
+        self.co.indicesOptions = faiss.INDICES_CPU
+        self.co.verbose = True
+        self.co.shard = True
+        self.faiss_index = faiss.index_cpu_to_gpu(res, 0, self.faiss_index, self.co)
+        # self.faiss_index = self.faiss_index.copy_from(self.faiss_index)
         # self.faiss_index = faiss.index_cpu_to_all_gpus(self.faiss_index)
         self.faiss_index.nprobe = nprobe
         self.emb2pid = None

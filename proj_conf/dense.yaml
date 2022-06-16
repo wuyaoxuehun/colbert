@@ -1,24 +1,52 @@
 dense_training_args:
   do_train: true
-  do_eval: true
-  score_temperature: 2e-2
+  do_eval: false
+  score_temperature: 5e-2
   pretrain_name: "bert"
   query_maxlen: 32
-  doc_maxlen: 320
+  doc_maxlen: 384
   dim: 768
-  train_task: "dureader-train-0"
-  dev_task: "dureader-dev-0"
-  test_task: "dureader-test-0"
+  train_task: "dureader_iter-train-0"
+  dev_task: "dureader_iter-dev-0"
+#  test_task: "dureader1-test-0"
+  test_task: "dureader1-train-0"
   device: "cuda"
+  #checkpoint: "./temp/checkpoint/checkpoint-10812"
 dense_index_args:
   collection: ??
   amp: true
   bsize: 384
-  checkpoint: "./temp/checkpoint-7720"
-  index_path: "/home2/awu/testcb/index/colbert/"
+  checkpoint: "./temp/checkpoint_colbert1/checkpoint-1272"
+  #checkpoint: "./temp/checkpoint/checkpoint-6360"
+#  checkpoint: "./temp/checkpoint_colbert1/checkpoint-1696"
+  index_path: "/home/awu/experiments/geo/others/testcb/index/colbert1/"
+  #index_path: "/home/awu/experiments/geo/others/testcb/index/colbert/"
+
 faiss_index_args:
   faiss_type: "colbert"
+  m: 64
+  nbits: 8
 enable_multiview: true
 dense_multiview_args:
-  q_view: 8
-  d_view: 14
+  q_view: 16
+  d_view: 16
+ce_training_args:
+  do_train: false
+  do_eval: false
+  do_test: true
+#  do_train: false
+#  do_eval: false
+#  do_test: true
+  score_temperature: 1
+  pretrain_name: "macbert"
+  max_seq_len: 384
+  neg_num: 4
+  train_task: "dureaderCE-train-0"
+  dev_task: "dureaderCE-dev-0"
+  test_task: "dureaderCETest-dev-0"
+  device: "cuda"
+  #checkpoint: "./temp/checkpoint/checkpoint-10812"
+ce_test_args:
+#  checkpoint: "./temp/checkpoint_ce/checkpoint-5400"
+  checkpoint: "./temp/checkpoint_ce/checkpoint-10800"
+  eval_topk: 100

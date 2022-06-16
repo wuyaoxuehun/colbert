@@ -4,11 +4,10 @@
 
 import sys
 import time
-import math
-import faiss
-import torch
 
+import faiss
 import numpy as np
+
 from colbert.utils.utils import print_message
 
 
@@ -21,9 +20,12 @@ class FaissIndexGPU:
 
         # self.tempmem = 1 << 33
         self.tempmem = 1 << 34
+        # self.tempmem = 1 << 35
         self.max_add_per_gpu = 1 << 25
+        # self.max_add_per_gpu = 1 << 26
         self.max_add = self.max_add_per_gpu * self.ngpu
         self.add_batch_size = 65536 // 2
+        # self.add_batch_size = 65536
 
         self.gpu_resources = self._prepare_gpu_resources()
 

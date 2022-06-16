@@ -15,7 +15,7 @@ def faiss_index_by_encoded(args):
     else:
         # index_faiss_simple(args)
         from colbert.indexing.faiss_indexers import ColbertRetriever
-        retriever = ColbertRetriever(index_path=index_path)
+        retriever = ColbertRetriever(index_path=index_path, m=args.faiss_index_args.m, nbits=args.faiss_index_args.nbits)
         retriever.encode_corpus(encoded_corpus_path=index_path)
 
 

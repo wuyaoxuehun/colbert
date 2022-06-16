@@ -10,6 +10,7 @@ class CostomTokenizer:
         self.args = args
         self.query_maxlen = args.dense_training_args.query_maxlen
         self.doc_maxlen = args.dense_training_args.doc_maxlen
+        self.ce_maxlen = args.ce_training_args.max_seq_len
         self.pretrain = args.dense_training_args.pretrain
         self.tokenizer = BertTokenizerFast.from_pretrained(self.pretrain)
         puncts = set(punctuation + string.punctuation)
@@ -60,6 +61,19 @@ class CostomTokenizer:
         # word_ids = inputs.word_ids()
         # return input_ids, attention_mask, active_indices, active_padding
         return input_ids, attention_mask, active_padding
+
+    def tokenize_ce(self, qp_seqs):
+        words = ["[CLS]" + q + "[SEP]" + p + "[SEP]" for q, p in qp_seqs]
+        inputs = self.tokenizer.batch_encode_plus(words,
+                                                  padding='max_length',
+                                                  # padding='longest' if not is_indexing else "max_length",
+                                                  max_length=self.ce_maxlen,
+                                                  truncation=True,
+                                                  add_special_tokens=False)
+
+        input_ids = inputs['input_ids']
+        attention_mask = inputs['attention_mask']
+        return input_ids, attention_mask
 
     def tokenize_q(self, batch_examples):
         questions = []

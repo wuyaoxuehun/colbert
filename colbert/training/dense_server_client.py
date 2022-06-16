@@ -12,9 +12,10 @@ from colbert.modeling.colbert_model import ColbertModel
 from colbert.training.training_utils import qd_mask_to_realinput
 # QueryData = namedtuple("QueryData", ["question", "topk", "faiss_depth", "nprobe"])
 from colbert.utils.dense_conf import load_dense_conf, data_dir_dic
-from proj_utils.dureader_utils import get_dureader_ori_corpus
+from proj_utils.dureader_utils import get_dureader_ori_corpus, eval_dureader
 
-os.environ["CUDA_VISIBLE_DEVICES"] = "2,3,4"
+
+# os.environ["CUDA_VISIBLE_DEVICES"] = "2,3,4"
 
 
 class DenseRetrieverServer:
@@ -23,7 +24,7 @@ class DenseRetrieverServer:
         self.index_path = args.dense_index_args.index_path
         self.dim = args.dense_training_args.dim
         faiss_type = args.faiss_index_args.faiss_type
-        self.colbert = ColbertModel(args.dense_training_args)
+        self.colbert = ColbertModel(args)
         self.colbert.load(args.dense_index_args.checkpoint + "/pytorch_model.bin")
         self.colbert = self.colbert.cuda()
         self.retriever = ColbertRetriever(index_path=self.index_path, dim=self.dim, model=self.colbert) if faiss_type == "colbert" \
@@ -55,50 +56,42 @@ class DenseRetrieverServer:
         while True:
             print("receiving connection --- --- ")
             conn = listener.accept()
-            print('connection accepted from', listener.last_accepted)
-            params = conn.recv()
-            pids = self.retrieve(*params)
-            conn.send(pids)
+            try:
+                print('connection accepted from', listener.last_accepted)
+                params = conn.recv()
+                pids = self.retrieve(*params)
+                conn.send(pids)
+            except:
+                print('retrieval error')
 
 
 class DenseRetrieverClient:
     def __init__(self):
-        address = ('localhost', 9090)
-        self.conn = Client(address, authkey=b'1')
+        self.address = ('localhost', 9090)
+        # self.conn = Client(self.address, authkey=b'1')
         print('connected to server')
 
     def retrieve(self, questions, topk, faiss_depth, nprobe):
+        self.conn = Client(self.address, authkey=b'1')
         self.conn.send((questions, topk, faiss_depth, nprobe))
         data = self.conn.recv()
         return data
 
 
+nprobe, faiss_depth = 128, 512
+
+
+# nprobe, faiss_depth = 128, 256
+
+
 def dureader_evaluate():
     dr_client = DenseRetrieverClient()
 
-    def eval_dureader(output_data):
-        topk = 10
-        recall_topk = 50
-        res = 0
-        recall_res = 0
-        for t in output_data:
-            for i in range(topk):
-                if t['res'][i][2] in t['positive_ctxs']:
-                    res += 1 / (i + 1)
-                    break
-            for i in range(recall_topk):
-                if t['res'][i][2] in t['positive_ctxs']:
-                    recall_res += 1
-                    break
-
-        print(f"mrr@10 = {res / len(output_data)}")
-        print(f"recall@50 = {recall_res / len(output_data)}")
-
     def test_to_submit():
-        dureader_corpus_dir = "/home2/awu/testcb/data/dureader/dureader-retrieval-baseline-dataset/passage-collection/"
+        dureader_corpus_dir = "/home/awu/experiments/geo/others/testcb/data/dureader_dataset/passage-collection/"
         passage_id_map = load_json(dureader_corpus_dir + "passage2id.map.json")
         # test_res = load_json("data/bm25/sorted/temp_test_res.json")
-        test_ori = load_json("/home2/awu/testcb/data/dureader/dureader-retrieval-test1/test1.json", line=True)
+        test_ori = load_json("/home/awu/experiments/geo/others/testcb/data/dureader_dataset/test1.json", line=True)
         output = {}
         test_res = eval_for_ds(test_ori)
         for t, t_ori in tqdm(zip(test_res, test_ori)):
@@ -111,24 +104,58 @@ def dureader_evaluate():
 
     def eval_for_ds(data):
         questions = [_['question'] for _ in data]
-        res = dr_client.retrieve(questions=questions, topk=50, faiss_depth=256, nprobe=128)
+        bs = 1024
+        res = []
+        for i in tqdm(range(0, len(data), bs)):
+            sub_questions = questions[i:i + bs]
+            sub_res = dr_client.retrieve(questions=sub_questions, topk=100, faiss_depth=faiss_depth, nprobe=nprobe)
+            res.extend(sub_res)
         print(len(res), len(res[0]))
-        input()
+        # input()
         print(len(questions), len(res))
         for t_ori, t in zip(data, res):
             t_ori['res'] = t
         return data
 
-    def eval_for_dev():
-        dev_data = load_json(data_dir_dic['dureader']('dev', 0))
+    def eval_for_dataset(ds_type='dev'):
+        dev_data = load_json(data_dir_dic['dureader'](ds_type, 0))
         dev_data = eval_for_ds(dev_data)
         eval_dureader(output_data=dev_data)
+        # dump_json(dev_data, f"data/{ds_type}_11.json")
 
     def eval_for_test():
         pass
 
-    # eval_for_dev()
-    test_to_submit()
+    eval_for_dataset('dev')
+    # test_to_submit()
+
+
+def test_res_to_test_rerank():
+    data = load_json("data/test_res.json")
+    all_paras = get_dureader_ori_corpus()
+    dureader_corpus_dir = "/home/awu/experiments/geo/others/testcb/data/dureader_dataset/passage-collection/"
+    passage_id_map = load_json(dureader_corpus_dir + "passage2id.map.json")
+    id_passage_map = {idx: passage for passage, idx in passage_id_map.items()}
+    # test_res = load_json("data/bm25/sorted/temp_test_res.json")
+    test_ori = load_json("/home/awu/experiments/geo/others/testcb/data/dureader_dataset/test1.json", line=True)
+    for t_ori, t_res in tqdm(zip(test_ori, data.items())):
+        assert t_res[0] == t_ori['question_id']
+        t_ori['retrieval_res'] = [all_paras[int(id_passage_map[_])] for _ in t_res[1]]
+        t_ori['ids'] = t_res[1]
+    dump_json(test_ori, "data/dureader_dataset/test_ce_rerank.json")
+
+
+def test_rerank_to_submit():
+    data = load_json("data/output_res.json")
+    output = {}
+    for t in tqdm(data):
+        res_ids = []
+        for _, _, p in t['res']:
+            tid = t['retrieval_res'].index(p)
+            res_ids.append(t['ids'][1][tid])
+        output[t['question_id']] = res_ids
+        assert len(res_ids) == 50
+    dump_json(output, "data/test_rerank_res.json")
 
 
 def OBQAEvaluate():
@@ -159,7 +186,7 @@ def OBQAEvaluate():
 
 def test_dense_retriever():
     dr = DenseRetrieverServer()
-    print(dr.retrieve(questions=["中国的首都"], topk=16, faiss_depth=256, nprobe=128))
+    print(dr.retrieve(questions=["中国的首都"], topk=16, faiss_depth=1024, nprobe=32))
 
 
 def server_start():
@@ -175,6 +202,9 @@ def test_client():
 if __name__ == '__main__':
     # test_client()
     # server_start()
+    # test_res_to_test_rerank()
+    # test_rerank_to_submit()
+    # exit()
     comm = sys.argv[1]
     if comm == "server":
         server_start()

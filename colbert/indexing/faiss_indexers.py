@@ -1,3 +1,4 @@
+import gc
 import logging
 import os
 import pickle
@@ -84,8 +85,8 @@ class DenseFlatIndexer(DenseIndexer):
         super(DenseFlatIndexer, self).__init__(buffer_size=buffer_size)
 
     def init_index(self, vector_sz: int):
-        # self.index = faiss.IndexFlatIP(vector_sz)
-        self.index = faiss.IndexFlatL2(vector_sz)
+        self.index = faiss.IndexFlatIP(vector_sz)
+        # self.index = faiss.IndexFlatL2(vector_sz)
 
     def to_gpu(self, rank):
         if rank is not None:
@@ -151,18 +152,21 @@ class DenseFaissRetriever:
             print_message("#> Processing a sub_collection with shape", sub_collection.shape)
             yield sub_collection
             del sub_collection
+            gc.collect()
 
 
 from colbert.ranking.colbert_ranker import ColbertIndex, ColbertRanker
 
 
 class ColbertRetriever(DenseFaissRetriever):
-    def __init__(self, index_path=None, faiss_index_path=None, faiss_depth=None, nprobe=None, rank=None, partitions=None, model=None, dim=None, **kwargs):
+    def __init__(self, index_path=None, faiss_index_path=None, faiss_depth=None, nprobe=None,
+                 rank=4, partitions=None, model=None, dim=None, m=64, nbits=8, **kwargs):
         super().__init__(index_path)
         self.faiss_index = None
         # self.retrieve = None
         self.index = None
         self.dim = dim
+        self.m, self.nbits = m, nbits
         self.partitions = partitions if partitions is not None else get_best_partitons(self.num_embeddings)
         self.rank = rank
         self.model = model
@@ -191,7 +195,7 @@ class ColbertRetriever(DenseFaissRetriever):
     def get_trained_colbert_index(self, collection):
         training_sample = collection
         dim = training_sample.shape[-1]
-        index = FaissIndexing(dim, self.partitions)
+        index = FaissIndexing(dim, self.partitions, self.m, self.nbits)
         print_message("#> Training with the vectors...")
         index.train(training_sample)
         print_message("Done training!\n")
@@ -201,9 +205,10 @@ class ColbertRetriever(DenseFaissRetriever):
         # print_message("#> Starting..")
         parts, parts_paths, samples_paths = get_parts(encoded_corpus_path)
         slice_parts_paths = parts_paths
-        sub_collection = load_index_part(slice_parts_paths[0])  # use the first part as collection for training
+        # sub_collection = load_index_part(slice_parts_paths[0])  # use the first part as collection for training
+        sub_collection = torch.cat([load_index_part(slice_parts_paths[_]) for _ in [0, 1, 2]])  # use the first part as collection for training
         sub_collection = sub_collection.cpu().float().numpy()
-        # print_message("#> Processing a sub_collection with shape", sub_collection.shape)
+        print_message("#> training sub_collection with shape", sub_collection.shape)
         return sub_collection
 
     def encode_corpus(self, encoded_corpus_path):
